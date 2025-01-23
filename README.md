@@ -26,3 +26,11 @@ in this repository, we have included data and algorithms to compute synergy amon
 - `resampling_heatmap.R`
 
 ## graded heatmap construction
+
+## median data set and cohort summary
+
+-`data_median.R`
+
+## interaction plot
+
+-`interactions_plots.R`
