@@ -259,5 +259,7 @@ View(summary_reduced)
 summary_reduced$IG_1D[ summary_reduced$rel_1D < 30 ] = -999
 summary_reduced$IG_2D[ summary_reduced$rel_2D < 30 ] = -999
 
+
 write.csv(summary_reduced, "strict_union_base_result_missingIG.csv")
 
+save.image("after_base_resapling_analysis.rda")
