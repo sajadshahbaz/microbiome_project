@@ -1,0 +1,123 @@
+---
+title: "Information Theory and Machine Learning Reveal Synergistic Interactions in
+  Gut Microbiota Related to Food Allergy - data analysis pipeline"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Initial data preparation
+
+Read the raw taxonomy abundance info and metadata from delimiter separated files.
+
+```{r read}
+metadata.filename <- "metadata.csv"
+taxa.filename <- "taxa.tsv"
+tdata <- as.data.frame(t(read.delim(taxa.filename, header = TRUE, sep = "\t")))
+colnames(tdata) <- tdata[1,]
+tdata <- tdata[-1,]
+
+metadata<-read.csv(metadata.filename, header = TRUE, sep = ",")
+rownames(metadata)<-metadata[,1]
+metadata<-metadata[,-1]
+
+```
+
+## Filtering of erroneus data
+
+
+```{r}
+library(magrittr)
+c("sex","height.cm","weight.kg","age.years")-> confounding_factors
+confounding_factors %in% colnames(metadata)
+metadata$sex[!(metadata$sex %in% c("male","female"))]<- NA
+metadata$height[metadata$height.cm<38]<-NA
+metadata$weight[metadata$weight.kg<1]<-NA
+metadata$age_years[metadata$age.years<=0]<-NA
+metadata$height[metadata$height.cm>220]<-NA
+metadata$weight[metadata$weight.kg<=1]<-NA
+metadata$weight[metadata$weight.kg>200]<-NA
+to_remove_mask <- (metadata[,confounding_factors] %>% is.na() %>% rowSums()) > 1
+metadata<-metadata[!to_remove_mask, ]
+```
+
+### Taxa table preparation 
+
+#### Bacteria selection and stool samples filtering
+
+```{r}
+#1. skip non bacterial taxa
+to_skip_IDX<- c(1:9, 1022:1028)
+tdata<- tdata[,-to_skip_IDX]
+print("inital number of taxa samples")
+print(nrow(tdata))
+metadata$env_material-> sample_source
+feces_rownames<- rownames(metadata)[ sample_source=="feces" ]
+tdata<-tdata[ intersect(rownames(tdata),feces_rownames),] 
+print("number of taxa samples from stool")
+print(nrow(tdata))
+```
+
+#### Alpha diversity analysis and normalization
+
+Normalize abundancies and use proportions to calculate 3 versions of alpha diversity indexes. Below plots show values of alpha diversity as a function of the rank of cumulative count of each sample.
+Investigation suggests a common cutoff point, which corresponds to minimum cumulative count of `3636`.
+
+```{r}
+  t_rownames<- rownames(tdata)
+  tdata<- lapply(tdata, as.numeric) %>% as.data.frame()
+  rownames(tdata)<- t_rownames
+  lib_sizes<- rowSums(tdata) 
+  t_props<-( tdata
+            )/lib_sizes #due to R recycling, each row gets divided by its sum
+  shannon_div<- -rowSums((t_props+1e-10)*log(t_props+1e-10))
+  simpson_index<- rowSums ( 1 - t_props^2  )
+  inverse_simp<- 1/rowSums( t_props^2 )
+  size_order<-order(lib_sizes)
+
+  taxa_min_lib_size= 3636 
+  crit_rank= which.min(abs(lib_sizes[size_order] - taxa_min_lib_size))
+
+  par(mfrow=c(3,1))
+  plot(shannon_div[size_order],type='l')
+  abline(v = crit_rank, col="red",lwd=2) 
+  plot(simpson_index[size_order],type='l')
+  abline(v = crit_rank, col="red",lwd=2) 
+  plot(inverse_simp[size_order],type='l')
+  abline(v = crit_rank, col="red",lwd=2) 
+
+
+  tdata<- tdata[ rowSums(tdata) >= taxa_min_lib_size, ]
+  tdata<- tdata/rowSums(tdata)
+```
+
+### Integrate two types of information and prepare data for base resampling procedure
+
+
+```{r}
+common_names<- intersect(rownames(metadata), rownames(tdata))
+tdata<- tdata[common_names,]
+metadata<-metadata[common_names,]
+print("# of samples left after filtering by alpha diverstiy (with repeating donors)")
+print(length(common_names))
+print("# of unique donors")
+print(length(unique(metadata$host.subject.id)))
+#saveRDS(taxonomy, "taxonomy_with_repeats.rds")
+#saveRDS(host_id, "host_id_with_repeats.rds")
+#saveRDS(disease, "disease_vector_with_repeats.rds")
+```
+
+## Base resamples construction
+
+```{r}
+source("draw_once_per_host2.R")
+y= 1 - as.numeric(metadata$allergic.to.i.have.no.food.allergies.that.i.know.of)
+host_id<- metadata$host.subject.id
+names(y)<- names(host_id)<- rownames(metadata)
+draw_once_per_host(taxonomy=tdata, disease = y, host_id = host_id,
+                   min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = TRUE,
+                   report_progess = TRUE)->agp
+```
+
