@@ -65,9 +65,10 @@ names(sauce)<-rownames(metadata)
 randomdataset<-list()
 
 for (i in 1:30){
+  i=1
 current_seed <- i  # Use 'i' as the seed value
   set.seed(current_seed)  # Set the seed for reproducibility
-draw_once_per_host(taxonomy = t_data, disease = y, source_material = sauce, host_id = h_id,
+draw_once_per_host(taxonomy = tdata, disease = y, source_material = sauce, host_id = h_id,
                    taxa_to_skip_IDX=c(1:9, 1022:1028), #archaea.eucaryotes,change if they are 
                    #in different places in 'taxonomy'
                    source_type ="feces" , #which source to keep

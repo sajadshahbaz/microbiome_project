@@ -1,7 +1,4 @@
 
-get_minority_class_size<- function(COL) {
-                                          tab<-table(COL); l1<- length(tab)==1; (1-l1)*min(tab)
-                                        }
 
 draw_once_per_host<- function( taxonomy, disease,host_id,
                                min_minority_class_taxa=20,
@@ -32,7 +29,7 @@ draw_once_per_host<- function( taxonomy, disease,host_id,
  if (is.null(rownames(taxonomy)))
    stop(" taxonomy must have names of samples as rownames")
   
- 
+
 common_names<- Reduce(intersect, list(rownames(taxonomy), names(disease), names(host_id)))
  
 taxonomy<- taxonomy[common_names,]
@@ -45,6 +42,7 @@ preproc_summary=list()
 
 ## find repeating host ids
 if (report_progess) print("working on sampling non repeating hosts...")
+#sampling_start<-Sys.time()
 table(host_id)-> hid_counts
 names(hid_counts[hid_counts>1])-> hosts_w_repeats
 
@@ -65,7 +63,8 @@ unlist(lapply(hosts_w_repeats, function(ID)
    samples_from_host<-  which(host_id_rep_hosts == ID)
    sample(samples_from_host,size = 1)
 }))-> sample_IDX_per_host
-
+#print("time for sampling")
+#print(Sys.time()-sampling_start)
 stopifnot(length(unique(sample_IDX_per_host))==length(sample_IDX_per_host))
 
 ## concatenate data without repeats with sampled data
@@ -80,7 +79,7 @@ host_id<- c(host_id[!repeats_id_mask],
 stopifnot(length(host_id)==nrow(taxonomy))
 stopifnot(length(host_id)==length(disease))
 
-if (get_minority_class_size(disease)< min_minority_class_dis)
+if  ( min(sum(disease==1),sum(disease==0))< min_minority_class_dis)
   stop(" after sampling, minority class size of disease is too small")
 preproc_summary[["# of disease samples after sampling"]]= sum(disease)
 
@@ -94,19 +93,29 @@ if (ncol(taxonomy)==0)
 preproc_summary[["# of taxa left with more than min_minority_class_taxa nonzeros after sampling"]]= ncol(taxonomy)
 
 if (report_progess) print("   ...done")
+#bin_start<-Sys.time()
 taxonomy<- as.matrix(taxonomy)
 
 if (report_progess) print("working on binarization")
-tb<-0*taxonomy
-for(i in 1:ncol(taxonomy)) tb[,i]<-(taxonomy[,i]>median(taxonomy[,i]))
+meds<-colMedians(taxonomy)
+tb<- t( t(taxonomy)>meds )*1. #exploit recycling mechanism.
+			      #column [[i]] of `taxonomy` gets binarized by meds[[i]]
+#tb2<-tb
+#print("time for binarization:")
+#print(Sys.time()-bin_start)
+#for (i in 1:ncol(taxonomy)) tb2[,i]= (taxonomy[,i]>meds[[i]])*1.
+#tb2<-as.data.frame(tb2)
+
+#minority_time<- Sys.time()
+t_mc<- pmin(colSums(tb==0),colSums(tb==1))
+#print("time for minority class calc:")
+#print(Sys.time()- minority_time)
+tb<- tb[, t_mc >= min_minority_class_taxa, drop=FALSE ]
+#tb2<-tb2[, t_mc >= min_minority_class_taxa, drop=FALSE ]
+taxonomy<- taxonomy[, t_mc >= min_minority_class_taxa, drop=FALSE ]
 
 taxonomy<-as.data.frame(taxonomy)
 tb<-as.data.frame(tb)
-
-unlist(lapply(tb,get_minority_class_size))-> t_mc
-tb<- tb[, t_mc >= min_minority_class_taxa, drop=FALSE ]
-taxonomy<- taxonomy[, t_mc >= min_minority_class_taxa, drop=FALSE ]
-
 preproc_summary[["# of binary taxa left with sufficient minority class size "]]= ncol(taxonomy)
 if (ncol(tb)==0)
   stop("after sampling and median binarization
@@ -118,6 +127,7 @@ if (print_summary)
   print(preproc_summary)
  list( taxa_abundance= taxonomy,
        taxa_binary= tb,
+#	tb2=tb2,
        disease_status=disease,
        host_id=host_id,
        summary_data=preproc_summary

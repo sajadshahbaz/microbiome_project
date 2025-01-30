@@ -80,7 +80,6 @@ Investigation suggests a common cutoff point, which corresponds to minimum cumul
   taxa_min_lib_size= 3636 
   crit_rank= which.min(abs(lib_sizes[size_order] - taxa_min_lib_size))
 
-  par(mfrow=c(3,1))
   plot(shannon_div[size_order],type='l')
   abline(v = crit_rank, col="red",lwd=2) 
   plot(simpson_index[size_order],type='l')
@@ -100,7 +99,7 @@ Investigation suggests a common cutoff point, which corresponds to minimum cumul
 common_names<- intersect(rownames(metadata), rownames(tdata))
 tdata<- tdata[common_names,]
 metadata<-metadata[common_names,]
-print("# of samples left after filtering by alpha diverstiy (with repeating donors)")
+print("# of samples left after filtering by alpha diversity (with repeating donors)")
 print(length(common_names))
 print("# of unique donors")
 print(length(unique(metadata$host.subject.id)))
@@ -109,15 +108,324 @@ print(length(unique(metadata$host.subject.id)))
 #saveRDS(disease, "disease_vector_with_repeats.rds")
 ```
 
+
 ## Base resamples construction
 
+Function `draw_once_per_host` does following things:
+
+- draws one sample from each unique donor which has submitted more than one sample
+
+- binarizes taxa by their median value, setting values bigger than median to 1
+
+- filters out sparse taxa according to `min_minority_class_taxa`
+
 ```{r}
+library(matrixStats)
 source("draw_once_per_host2.R")
-y= 1 - as.numeric(metadata$allergic.to.i.have.no.food.allergies.that.i.know.of)
+#y= 1 - as.numeric(metadata$allergic.to.i.have.no.food.allergies.that.i.know.of)
+#names(y)<-rownames(metadata)
+y= readRDS("ANY_FOOD_ALLERGY_DECISION.rds")
 host_id<- metadata$host.subject.id
-names(y)<- names(host_id)<- rownames(metadata)
+names(host_id)<- rownames(metadata)
+base_resamples<- list()
+start<-Sys.time()
+for (i in 1:30){
+  set.seed(i)
 draw_once_per_host(taxonomy=tdata, disease = y, host_id = host_id,
-                   min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = TRUE,
-                   report_progess = TRUE)->agp
+                   min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = FALSE,
+                   report_progess = FALSE)->base_resamples[[i]]
+message(sprintf("%d/30 done",i))
+}
+print(Sys.time()-start)
+saveRDS(base_resamples, "base_resamples.rds")
 ```
 
+
+## Feature selection
+
+Perform MDFS in 1D and 2D mode on each of the prepared base resamples.
+
+```{r}
+base_resamples<-readRDS("base_resamples.rds")
+library(MDFS)
+MDFS_1D<-MDFS_2D<-MDFS_1D_relnames<-MDFS_2D_relnames<-MDFS_1D2D_relnames<-list()
+for (i in 1:30){current_seed=i
+  set.seed(current_seed)
+  # Perform MDFS with 1D
+  MDFS_1D_result <- MDFS(
+    data = base_resamples[[i]]$taxa_binary,
+    decision = base_resamples[[i]]$disease_status,
+    dimensions = 1,
+    divisions = 1,
+    discretizations = 1,
+    range = 0,
+    seed= current_seed,  # Set the seed for reproducibility
+    level = 0.05
+  )
+
+  MDFS_1D[[i]] <- MDFS_1D_result
+  MDFS_1D_relnames[[i]] <- colnames(base_resamples[[i]]$taxa_binary)[MDFS_1D_result$relevant.variables]
+
+  # Perform MDFS with 2D
+  MDFS_2D_result <- MDFS(
+    data = base_resamples[[i]]$taxa_binary,
+    decision = base_resamples[[i]]$disease_status,
+    dimensions = 2,
+    divisions = 1,
+    discretizations = 1,
+    range = 0,
+    seed = current_seed,
+    level = 0.05
+  )
+  MDFS_2D[[i]] <- MDFS_2D_result
+  MDFS_2D_relnames[[i]] <- colnames(base_resamples[[i]]$taxa_binary)[MDFS_2D_result$relevant.variables]
+
+  # Combine 1D and 2D relevant variables
+  MDFS_1D2D_relnames[[i]] <- union(MDFS_1D_relnames[[i]], MDFS_2D_relnames[[i]])
+message(sprintf("%d/30 done",i))
+}
+
+# Combine results into lists of lists
+MDFS_object_lists <- list(MDFS_1D = MDFS_1D, MDFS_2D = MDFS_2D)
+relnames_lists <- list(MDFS_1D_rel = MDFS_1D_relnames, 
+                       MDFS_2D_rel = MDFS_2D_relnames, 
+                       MDFS_1D2D_rel = MDFS_1D2D_relnames)
+# Save results
+save(relnames_lists, MDFS_object_lists, 
+     file = "rel_MDFS_group.RData")
+```
+
+## Integrate results from base resamples 
+
+```{r}
+#names rel. either in 1D or 2D in each of the trials
+any_times_relevant_taxa<- Reduce(union, relnames_lists$MDFS_1D2D_rel)
+
+
+```
+
+### Estabilish robust set of relevant features from base resampling
+
+#### Calculate frequencies of appearance as relevant
+
+```{r}
+#containers for frequencies
+rel_freq<-rel_freq_1D<-rel_freq_2D<-rep(0, length(any_times_relevant_taxa))
+names(rel_freq)<-names(rel_freq_1D)<-names(rel_freq_2D)<-any_times_relevant_taxa
+for (i in seq_along(relnames_lists[[1]])) {
+ rel_freq<- rel_freq + ( any_times_relevant_taxa %in% relnames_lists$MDFS_1D2D_rel[[i]] )*1. 
+ rel_freq_1D<- rel_freq_1D + ( any_times_relevant_taxa %in% relnames_lists$MDFS_1D_rel[[i]] )*1. 
+ rel_freq_2D<- rel_freq_2D + ( any_times_relevant_taxa %in% relnames_lists$MDFS_2D_rel[[i]] )*1. 
+  
+}
+```
+
+#### Reduce the set to taxa that appeared relevant 30 times in either 1D or 2D
+
+```{r}
+which_stay<-(rel_freq==30)
+base_relevant_set<- any_times_relevant_taxa[which_stay]
+rel_freq<- rel_freq[which_stay]
+rel_freq_1D<-rel_freq_1D[which_stay]
+rel_freq_2D<-rel_freq_2D[which_stay]
+```
+
+### Find interaction partners for each of 2D relevant taxa
+
+Function `get_interaction_partner` finds the best partners of each variable in `dataset` determined by index in `interesting.vars`, according to the Information Gain (IG) on `decision`.
+Here:
+
+- `dataset` will be binarized taxa, 
+
+- `decision` is disease status,
+
+- `interesting.vars` will be variables relevant in 2D analysis,
+
+... in each of the 30 base resamples.
+
+
+```{r}
+
+get_interaction_partner<- function(dataset, decision, interesting.vars, ...){
+
+if (!(all(interesting.vars %in% 1:ncol(dataset))))
+        stop("interesting.vars must be in 1:ncol(dataset)")
+
+if (is.null(colnames(dataset)))
+        stop("datatset should have column names (taxa names)")
+
+best.tuples <- ComputeInterestingTuples(dataset,
+                                        decision,
+                                        interesting.vars =interesting.vars,                                         ...
+                                          )
+do.call(rbind,
+       lapply(interesting.vars, function(V){
+
+               V_subset<- best.tuples$Var == V
+               V_which.max<- which.max( best.tuples[ V_subset,]$IG )
+              m_t1<-best.tuples[ V_subset, ][V_which.max, ][["Tuple.1"]]
+              m_t2<-best.tuples[ V_subset, ][V_which.max, ][["Tuple.2"]]
+              p_IDX<- if( V== m_t1) m_t2 else m_t1
+              data.frame( rel_IDX= V, partner_IDX= p_IDX, rel_name = colnames(dataset)[[V]],                                                                             partner_name= colnames(dataset)[[p_IDX]],
+                 rel_IG= best.tuples[ V_subset, ][V_which.max,][["IG"]] )
+              }
+             )
+       )
+}
+
+
+```
+
+
+#### Apply the function on each of the base resamples:
+
+```{r}
+
+partners_per_run<- list()
+i_set<-1
+for (i_set in seq_along(base_resamples))
+{
+partners_per_run[[i_set]] <-
+get_interaction_partner(dataset=base_resamples[[i_set]]$taxa_binary,
+                         decision=base_resamples[[i_set]]$disease_status,
+                     interesting.vars=MDFS_object_lists[[2]][[i_set]]$relevant.variables ,
+                        range=0, dimensions=2)
+
+}
+
+
+
+```
+
+Function returns data.frame of names of relevant variables (taxa), their positions in each set and the same of their partners.
+We can inspect output from one run, for context. Auxiliary function shortens taxa names to the deepest available classification:
+
+```{r}
+
+partners_per_run[[1]]-> example_out
+
+get_deepest_taxonomy_lvl<- function(taxa_name){
+strsplit(taxa_name,"\\.")-> splitted
+splitted[[1]][[ length(splitted[[1]]) ]]
+}
+example_out$rel_name<- unlist(lapply(example_out$rel_name, get_deepest_taxonomy_lvl))
+example_out$partner_name<- unlist(lapply(example_out$partner_name, get_deepest_taxonomy_lvl))
+
+example_out[order(example_out$rel_IG, decreasing=TRUE),] %>% head
+
+```
+
+#### Aggregate the results from all resamples
+
+We calculate mean IG for each synergistic pair over all base resamples it appears in.
+
+Then, for each relevant variable in 2D, we take its "definitive" partner as the one that had maximum mean IG over all base resamples.
+
+```{r}
+#mean IG
+do.call(rbind, partners_per_run)-> partners_all_runs #all runs together
+aggregate(partners_all_runs$rel_IG, #value to aggregate
+          list(rel=partners_all_runs$rel_name,       #factors over which to group
+              partner=partners_all_runs$partner_name),
+          mean #how to aggregate
+          )-> partner_IG_tabulation
+
+
+lapply(base_relevant_set[rel_freq_2D==30], function(taxon)
+{
+        taxon_subset<- partner_IG_tabulation$rel == taxon
+        if (any(taxon_subset))
+        {
+                taxon_partners<-partner_IG_tabulation[ taxon_subset, ,drop=FALSE]
+                taxon_partners$partner[[ which.max(taxon_partners$x) ]]
+        } else NA
+
+}       ) %>% unlist() -> best_partners_baseRelSet
+
+names(best_partners_baseRelSet)<- base_relevant_set[rel_freq_2D==30]
+
+```
+
+
+#### Use mean IG to estabilish true synergies
+
+We calculate mean IG of all selected taxa so far (relevant 30 times in 1D or 2D + best partners for 2D relevant ones) to estabilish criteria for synergy:
+
+- if the increase of IG in 2D of the 2D relevant variable is bigger than the minimal IG in 1D analysis. 
+
+
+```{r}
+union(base_relevant_set, unname(best_partners_baseRelSet))-> overall_rel_list
+
+#containers of mean IG
+overall_rel_IG1D<- rep(0, length(overall_rel_list))
+overall_rel_IG2D<- rep(0, length(overall_rel_list))
+names(overall_rel_IG1D)<-names(overall_rel_IG2D)<-overall_rel_list
+rel_1D_names<- names(rel_freq[rel_freq_1D==30])
+rel_2D_names<- names(rel_freq[rel_freq_2D==30])
+for (i in seq_along(MDFS_object_lists[[1]])){
+  #taxa present in run "i"
+  resample_present_taxa<-colnames(base_resamples[[i]]$taxa_binary)
+  #found relevant in "i" and relevant 30 times overall
+  intersect(resample_present_taxa, relnames_lists[[1]][[i]]) -> rel1Dtaxa_thisRun
+  intersect(rel1Dtaxa_thisRun, rel_1D_names)-> rel1Dtaxa_thisRun
+  intersect(resample_present_taxa, relnames_lists[[2]][[i]]) -> rel2Dtaxa_thisRun
+  intersect(rel2Dtaxa_thisRun, rel_2D_names)-> rel2Dtaxa_thisRun
+  #their position in run "i"
+  match( rel1Dtaxa_thisRun, resample_present_taxa)-> rel_1D_idx
+  match( rel2Dtaxa_thisRun, resample_present_taxa)-> rel_2D_idx
+  #their IG 
+   MDFS_object_lists[[1]][[i]]$statistic[ rel_1D_idx ] -> IG_1D_resample
+   MDFS_object_lists[[2]][[i]]$statistic[ rel_2D_idx ] -> IG_2D_resample
+   stopifnot(all(rel1Dtaxa_thisRun %in% names(overall_rel_IG1D))) 
+   stopifnot(all(rel2Dtaxa_thisRun %in% names(overall_rel_IG2D))) 
+   #increase sums only for relevant variables from that run
+   overall_rel_IG1D[ rel1Dtaxa_thisRun ] = overall_rel_IG1D[ rel1Dtaxa_thisRun ] + IG_1D_resample
+   overall_rel_IG2D[ rel2Dtaxa_thisRun ] = overall_rel_IG2D[ rel2Dtaxa_thisRun ] + IG_2D_resample
+}
+#divide overall_rel_IG by the times each variable was found relevant
+times_rel_overall<- rep(1, length(overall_rel_list))
+names(times_rel_overall)<-overall_rel_list
+times_rel_overall[ names(rel_freq) ] = rel_freq
+overall_rel_IG1D<- overall_rel_IG1D/times_rel_overall
+overall_rel_IG2D<- overall_rel_IG2D/times_rel_overall
+
+#overall_rel_IG1D[ !(overall_rel_list %in% names(rel_freq_1D)[rel_freq_1D==30]) ] =0
+#overall_rel_IG2D[ !(overall_rel_list %in% names(rel_freq_2D)[rel_freq_2D==30]) ] =0
+```
+
+```{r}
+data.frame( name=overall_rel_list,
+            IG1D=overall_rel_IG1D, IG2D= overall_rel_IG2D)-> ig_df
+ig_df$rel_1D<- rel_freq_1D[ ig_df$name ]
+ig_df$rel_2D<- rel_freq_2D[ ig_df$name ]
+ig_df$rel_1D[ is.na(ig_df$rel_1D) ] = 0
+ig_df$rel_2D[ is.na(ig_df$rel_2D) ] = 0
+ig_df$partner_name<- best_partners_baseRelSet[ ig_df$name ]
+ig_df$partner_only<- ig_df$name %in% setdiff(best_partners_baseRelSet, base_relevant_set)
+synergy_thr<- min(ig_df$IG1D[ig_df$rel_1D==30])
+print("minimal increase of IG in 2D analysis for estabilishing synergy:")
+print(synergy_thr)
+IG_increase= ig_df$IG2D - ig_df$IG1D
+# find the true synergies using the thredhold and IG_increase of primary 2D rel. variable:
+true_synergistic_partners<-vector(mode="character")
+for (partner_only in ig_df$name[ig_df$partner_only])
+{
+  if (max(IG_increase[which(ig_df$partner_name== partner_only) ]) > synergy_thr)
+    true_synergistic_partners[[ length(true_synergistic_partners)+1 ]] = partner_only
+}
+
+#for the rest of the analysis:
+# keep taxa that were relevant 30 times in 2D or 1D and true synergistic partners.
+taxa_to_keep_mask<- (ig_df$name %in% true_synergistic_partners) | 
+                      (ig_df$rel_1D==30 ) | 
+                      (ig_df$rel_2D==30)
+ig_df<- ig_df[ taxa_to_keep_mask,]
+ig_df<- ig_df[ order(-ig_df$IG2D),]
+viz_ig_df<- ig_df
+viz_ig_df$name<- unlist(lapply(viz_ig_df$name, get_deepest_taxonomy_lvl))
+viz_ig_df$partner_name<- unlist(lapply(viz_ig_df$partner_name, get_deepest_taxonomy_lvl))
+rownames(viz_ig_df)<- 1:nrow(viz_ig_df)
+viz_ig_df[,2:3]<-round(viz_ig_df[,2:3])
+View(viz_ig_df)
+```
