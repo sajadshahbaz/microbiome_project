@@ -127,17 +127,17 @@ source("draw_once_per_host2.R")
 y= readRDS("ANY_FOOD_ALLERGY_DECISION.rds")
 host_id<- metadata$host.subject.id
 names(host_id)<- rownames(metadata)
-base_resamples<- list()
-start<-Sys.time()
-for (i in 1:30){
-  set.seed(i)
-draw_once_per_host(taxonomy=tdata, disease = y, host_id = host_id,
-                   min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = FALSE,
-                   report_progess = FALSE)->base_resamples[[i]]
-message(sprintf("%d/30 done",i))
-}
-print(Sys.time()-start)
-saveRDS(base_resamples, "base_resamples.rds")
+#base_resamples<- list()
+#start<-Sys.time()
+#for (i in 1:30){
+#  set.seed(i)
+#draw_once_per_host(taxonomy=tdata, disease = y, host_id = host_id,
+#                   min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = FALSE,
+#                   report_progess = FALSE)->base_resamples[[i]]
+#message(sprintf("%d/30 done",i))
+#}
+#print(Sys.time()-start)
+#saveRDS(base_resamples, "base_resamples.rds")
 ```
 
 
@@ -146,7 +146,9 @@ saveRDS(base_resamples, "base_resamples.rds")
 Perform MDFS in 1D and 2D mode on each of the prepared base resamples.
 
 ```{r}
-base_resamples<-readRDS("base_resamples.rds")
+#base_resamples<-readRDS("base_resamples.rds")
+load("../randomdataset.RData")
+lapply(randomdataset, function(x) x$agp_sample) -> base_resamples
 library(MDFS)
 MDFS_1D<-MDFS_2D<-MDFS_1D_relnames<-MDFS_2D_relnames<-MDFS_1D2D_relnames<-list()
 for (i in 1:30){current_seed=i
@@ -305,7 +307,7 @@ We can inspect output from one run, for context. Auxiliary function shortens tax
 partners_per_run[[1]]-> example_out
 
 get_deepest_taxonomy_lvl<- function(taxa_name){
-strsplit(taxa_name,"\\.")-> splitted
+strsplit(taxa_name,";")-> splitted
 splitted[[1]][[ length(splitted[[1]]) ]]
 }
 example_out$rel_name<- unlist(lapply(example_out$rel_name, get_deepest_taxonomy_lvl))
@@ -427,5 +429,297 @@ viz_ig_df$name<- unlist(lapply(viz_ig_df$name, get_deepest_taxonomy_lvl))
 viz_ig_df$partner_name<- unlist(lapply(viz_ig_df$partner_name, get_deepest_taxonomy_lvl))
 rownames(viz_ig_df)<- 1:nrow(viz_ig_df)
 viz_ig_df[,2:3]<-round(viz_ig_df[,2:3])
-View(viz_ig_df)
+viz_ig_df
+```
+
+## mean presence and abundance of selected taxons across 30 trials
+
+```{r}
+summary_df<- ig_df
+summary_df$name-> interesting_taxa
+#ensure all base_resamples have same number of rows 
+stopifnot( all(
+        (lapply(base_resamples, function(x) nrow(x$taxa_abundance)) %>%
+            unlist() )== nrow(base_resamples[[1]]$taxa_abundance) 
+              )
+         )
+
+#common basis for all interesting taxa
+# (containers for sums)
+A_h<-A_d<-P_h<-P_d<-P<-A<- rep(0, length(interesting_taxa))
+names(P)<-names(A)<-interesting_taxa
+names(P_d)<-names(A_d)<-interesting_taxa
+names(P_h)<-names(A_h)<-interesting_taxa
+
+#sum means over resamples
+for (i in seq_along(base_resamples)){
+    
+    intr_present_resample<- intersect(interesting_taxa,
+                                colnames(base_resamples[[i]]$taxa_abundance)
+                                    )
+
+    P_rsmp<-base_resamples[[i]]$taxa_binary[, intr_present_resample]
+    A_rsmp<-base_resamples[[i]]$taxa_abundance[, intr_present_resample]
+    y_rsmp<-base_resamples[[i]]$disease_status
+
+    P[ intr_present_resample ] =  P[ intr_present_resample ] +
+            colMeans(P_rsmp)
+    A[ intr_present_resample ] =  A[ intr_present_resample ] +
+            colMeans(A_rsmp)
+
+    P_d[ intr_present_resample ] =  P_d[ intr_present_resample ] +
+            colMeans(P_rsmp[y_rsmp==1,])
+    A_d[ intr_present_resample ] =  A_d[ intr_present_resample ] +
+            colMeans(A_rsmp[y_rsmp==1,])
+
+    P_h[ intr_present_resample ] =  P_h[ intr_present_resample ] +
+            colMeans(P_rsmp[y_rsmp==0,])
+    A_h[ intr_present_resample ] =  A_h[ intr_present_resample ] +
+            colMeans(A_rsmp[y_rsmp==0,])
+}
+#.. and divide by 30
+P<-P/30
+A<-A/30
+P_h<-P_h/30
+A_h<-A_h/30
+P_d<-P_d/30
+A_d<-A_d/30
+summary_df$freq= P
+summary_df$ab= A
+summary_df$freq_d= P_d
+summary_df$ab_d= A_d
+summary_df$freq_h= P_h
+summary_df$ab_h= A_h
+
+```
+# Bootstrap resampling validation
+
+Following initial selection of robust features relevant both in 1D and 2D, we validated the results by the use of bootstrap resampling on base resamples themselves.
+
+From each base resample, we have drawn a boostrap resample and performed feature selection again and counted number of times selected features reappeared again as relevant.
+Additionally, to test the usability of detected two dimensional interactions, we measured the average gain of AUC from random forest classifier, trained using only 1D relevant variables vs on the whole set of 1D and 2D relevant features.
+
+
+
+## Preparation if bootstrap samples (by sampling indexes)
+
+```{r}
+N_TRIALS=30
+keep_frac<-1
+
+n1<-  sum(base_resamples[[1]]$disease_status==1)
+n0<-  sum(base_resamples[[1]]$disease_status==0)
+
+n1k<- ceiling(n1*keep_frac)
+n0k<- ceiling(n0*keep_frac)
+
+#list of 30
+set.seed(32523)
+B_idx<- lapply(1:N_TRIALS,
+                       function(B)
+                       {
+                         y<-base_resamples[[B]]$disease_status
+                         
+                         idx_1= which(y==1)
+                         idx_0= which(y==0)
+                         c( sample(idx_1, n1k, replace=TRUE),
+                        sample(idx_0, n0k, replace=TRUE)
+                         )
+                       }
+                      )
+saveRDS(B_idx,"Bootstrap_IDX.rds")
+
+```
+
+## Feature selection and RF
+
+We save results of each run in subdirectories `MDFS_results`, `RF_models` and calculate mean metrics after all computation is done.
+
+```{r}
+library(randomForest)
+library(pROC)
+#prepare list of seeds per each bootstrap for reproducibility
+set.seed(32432)
+session_seeds<- sample.int(323423,N_TRIALS)
+    summary_df$name[summary_df$rel_1D==30] -> consensus_1D
+    summary_df$name -> consensus_AllRelevant
+for (B in 1:N_TRIALS) {
+    IDX_B<-  B_idx[[B]]
+    set_B<- base_resamples[[B]]
+    set.seed(session_seeds[[B]])
+#FS
+   if (!file.exists( sprintf("MDFS_results/MDFS_replicate_%d.rds", B ) ) ) {
+    MDFS_1D<- MDFS(
+    data = set_B$taxa_binary[IDX_B,],
+    decision = set_B$disease_status[IDX_B],
+    dimensions = 1,
+    divisions = 1,
+    discretizations = 1,
+    range = 0,
+    seed= session_seeds[[B]], 
+    level = 0.05
+    )
+    rel_1D<- colnames(set_B$taxa_binary)[MDFS_1D$relevant.variables]
+    # Perform MDFS with 2D
+    MDFS_2D<- MDFS(
+    data = set_B$taxa_binary[IDX_B,],
+    decision = set_B$disease_status[IDX_B],
+    dimensions = 2,
+    divisions = 1,
+    discretizations = 1,
+    range = 0,
+    seed = session_seeds[[B]],
+    level = 0.05
+    )
+    rel_2D<- colnames(set_B$taxa_binary)[MDFS_2D$relevant.variables]
+    rel_1or2D<-  union( rel_1D, rel_2D)  
+    FS<- list(rel_1D= rel_1D,
+            rel_2D= rel_2D,
+            rel_1or2D=rel_1or2D)
+    saveRDS( FS, sprintf("MDFS_results/FS_replicate_%d.rds", B ) )
+    saveRDS( list(MDFS_1D=MDFS_1D,
+                MDFS_2D=MDFS_2D),
+            sprintf("MDFS_results/MDFS_replicate_%d.rds", B ) )
+	}
+            
+
+    #RF
+	if ( ! file.exists( sprintf("RF_models/RF_replicate_%d.rds",B)) ) {
+    unique(IDX_B)-> uqIDX_B
+    set.seed(session_seeds[[B]])
+    randomForest(x = set_B$taxa_binary[uqIDX_B, consensus_1D],
+                y =  as.factor(set_B$disease_status[uqIDX_B]),
+                importance = TRUE,
+                keep.forest = TRUE)-> RF_1D
+    randomForest(x = set_B$taxa_binary[uqIDX_B, consensus_AllRelevant],
+                y =  as.factor(set_B$disease_status[uqIDX_B]),
+                importance = TRUE,
+                keep.forest = TRUE)-> RF_all
+    saveRDS(list(RF_1D=RF_1D,
+                RF_all=RF_all),
+            sprintf("RF_models/RF_replicate_%d.rds", B)
+    )
+	}
+    message(sprintf("%d/%d done", B, N_TRIALS))
+}
+```
+
+### Aggregation of results
+
+#### Count how many times relevant features showed up again and compute mean random forest metrics
+```{r}
+library(pROC)
+
+#filename patterns for reading the results
+fs_fpattern<-"MDFS_results/FS_replicate_%d.rds"
+mdfs_fpattern<-"MDFS_results/MDFS_replicate_%d.rds"
+rf_fpattern<- "RF_models/RF_replicate_%d.rds" 
+
+#containers:
+rel_2D_trials<-rel_1D_trials<- list()  #for indicators of relevance per each run
+CM1_trials<-CMall_trials<-  list() #for confusion matrices
+RF1_trials<- RFall_trials<-list() #for RF performance metrics
+
+#auxiliary oods ratio computation
+odds_ratio<- function(CM) {(CM[2,2]*CM[1,1])/(CM[1,2]*CM[2,1]) } 
+
+for (B in 1:N_TRIALS){
+
+B_tnames<-colnames(base_resamples[[B]]$taxa_abundance)
+B_P<- base_resamples[[B]]$taxa_binary #presence
+B_A<- base_resamples[[B]]$taxa_abundance #presence
+B_y<- base_resamples[[B]]$disease_status
+
+
+#indexes of resampled and oob subjects
+B_IDX<- B_idx[[B]]
+B_oob<- setdiff( 1:nrow(B_A), unique(B_IDX))
+
+B_fs_fname<- sprintf( fs_fpattern, B)
+B_FS<- readRDS( B_fs_fname)
+
+#relevance indicators
+rel_1D_trials[[B]]= 1.*(consensus_AllRelevant %in% B_FS$rel_1D)
+rel_2D_trials[[B]]= 1.*(consensus_AllRelevant %in% B_FS$rel_2D)
+
+#RF prediction on OOB
+
+B_fs_fname<- sprintf( fs_fpattern, B)
+B_rf_fname<- sprintf( rf_fpattern, B)
+B_RF<- readRDS(B_rf_fname)$RF_all
+B_RF1<- readRDS(B_rf_fname)$RF_1D
+
+
+#predicted probabilities
+B_RFall_prob<- predict( B_RF, newdata= B_P[B_oob,], type="prob")[,2]
+B_RF1_prob<- predict( B_RF1, newdata= B_P[B_oob,], type="prob")[,2]
+
+#predicted classes
+B_RFall_cl<-  B_RFall_prob>0.5
+B_RF1_cl<- B_RF1_prob>0.5
+
+B_yoob<- B_y[B_oob]
+
+#confusion matrices
+cm_all<- table(Predicted=B_RFall_cl,Actual=B_yoob)
+cm_1<- table(Predicted=B_RF1_cl,Actual=B_yoob)
+
+CM1_trials[[B]]<- cm_1
+CMall_trials[[B]]<- cm_all
+
+
+RFall_score<- c(auc= auc(response=B_yoob, predictor= B_RFall_prob),
+		OR=odds_ratio(cm_all),
+		acc= sum( B_yoob == B_RFall_cl)/length(B_yoob)
+)
+RF1_score<- c(auc= auc(response=B_yoob, predictor= B_RF1_prob),
+	      OR=odds_ratio(cm_1),
+		acc= sum( B_yoob == B_RF1_cl)/length(B_yoob)
+	      )
+
+RF1_trials[[B]]<- RF1_score
+RFall_trials[[B]]<- RFall_score
+
+
+}
+
+
+print("mean stats and SDs for RF on 1D:")
+print(colMeans(do.call(rbind,RF1_trials)) )
+print(colSds(do.call(rbind,RF1_trials)) )
+print("confustuon matrix for all trials of RF on 1D:")
+mean_CM_1D<- Reduce("+", CM1_trials)
+print(mean_CM_1D)
+
+print("mean stats for RF on 1,2D and partners:")
+print(colMeans(do.call(rbind,RFall_trials)) )
+print(colSds(do.call(rbind,RFall_trials)) )
+print("confusion matrix for all trials of RF on 1, 2D and partners:")
+mean_CM_all<- Reduce("+", CMall_trials)
+print(mean_CM_all)
+
+#reappearance as relevant in BS per each feature
+Reduce("+", rel_1D_trials)->times_rel1D_BS
+Reduce("+", rel_2D_trials)->times_rel2D_BS
+
+names(times_rel1D_BS)<- names(times_rel2D_BS)<- consensus_AllRelevant
+
+```
+
+### Check the plausibility of initial feature set:
+
+```{r}
+
+summary_df$BS_rel1D= times_rel1D_BS[ summary_df$name ]
+summary_df$BS_rel2D= times_rel2D_BS[ summary_df$name ]
+viz_df<-summary_df
+viz_df$name<- unlist(lapply(summary_df$name, get_deepest_taxonomy_lvl))
+rownames(viz_df)<-NULL
+viz_df[, c("name","rel_1D","BS_rel1D")]
+```
+
+```{r}
+
+viz_df[, c("name","rel_2D","BS_rel2D")]
+
 ```
