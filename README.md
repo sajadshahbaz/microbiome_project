@@ -11,10 +11,6 @@ Other scripts contain internal helper functions.
 
 - `graded_heatmap.R`
 
-## median data set and cohort summary
-
--`data_median.R`
-
 ## interaction plot
 
 -`interactions_plots.R`
