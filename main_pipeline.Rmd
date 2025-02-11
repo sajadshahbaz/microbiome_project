@@ -39,7 +39,7 @@ metadata$age_years[metadata$age.years<=0]<-NA
 metadata$height[metadata$height.cm>220]<-NA
 metadata$weight[metadata$weight.kg<=1]<-NA
 metadata$weight[metadata$weight.kg>200]<-NA
-to_remove_mask <- (metadata[,confounding_factors] %>% is.na() %>% rowSums()) > 1
+to_remove_mask <- (metadata[,confounding_factors] %>% is.na() %>% rowSums()) > 0
 metadata<-metadata[!to_remove_mask, ]
 ```
 
@@ -238,15 +238,15 @@ library(matrixStats)
 source("draw_once_per_host2.R")
 #y= 1 - as.numeric(metadata$allergic.to.i.have.no.food.allergies.that.i.know.of)
 #names(y)<-rownames(metadata)
-y= readRDS("ANY_FOOD_ALLERGY_DECISION.rds")
-host_id<- metadata$host.subject.id
-names(host_id)<- rownames(metadata)
+#y= readRDS("ANY_FOOD_ALLERGY_DECISION.rds")
+host_id<- metadata$host.subject.id#[rownames(metadata) %in% names(y)]
+names(host_id)<- rownames(metadata)#[rownames(metadata) %in% names(y),])
 #base_resamples<- list()
 #start<-Sys.time()
 #for (i in 1:30){
 #  set.seed(i)
 #draw_once_per_host(taxonomy=tdata, disease = y, host_id = host_id,
-#                   min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = FALSE,
+ #                  min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = FALSE,
 #                   report_progess = FALSE)->base_resamples[[i]]
 #message(sprintf("%d/30 done",i))
 #}
@@ -538,13 +538,113 @@ taxa_to_keep_mask<- (ig_df$name %in% true_synergistic_partners) |
                       (ig_df$rel_2D==30)
 ig_df<- ig_df[ taxa_to_keep_mask,]
 ig_df<- ig_df[ order(-ig_df$IG2D),]
-viz_ig_df<- ig_df
-viz_ig_df$name<- unlist(lapply(viz_ig_df$name, get_deepest_taxonomy_lvl))
-viz_ig_df$partner_name<- unlist(lapply(viz_ig_df$partner_name, get_deepest_taxonomy_lvl))
-rownames(viz_ig_df)<- 1:nrow(viz_ig_df)
-viz_ig_df[,2:3]<-round(viz_ig_df[,2:3])
-viz_ig_df
 ```
+
+## Interaction plots
+
+Based on median dataset and results of above computations, we show plots of abundance of Bergeyella vs abundance of Neissseria.
+
+Due to zero inflation, to make the "absence" state more visble, plot visualizes zeroes (samples where one of the bacteria is absent) as values evenly distributed on a small interval around 0 (signified by grey bands).
+
+```{r}
+
+last.name<-function(x,sep='\\.',n=1) {
+ return(unlist(lapply(strsplit(x,sep),FUN=function(x) tail(x,n))))
+}
+
+decision<-decision.mean.final
+
+taxon2<-'sk__Bacteria.k__.p__Bacteroidetes.c__Flavobacteriia.o__Flavobacteriales.f__Flavobacteriaceae.g__Bergeyella'
+
+for (taxon1 in c(
+ 'sk__Bacteria.k__.p__Proteobacteria.c__Betaproteobacteria.o__Neisseriales.f__Neisseriaceae.g__Neisseria',
+ 'sk__Bacteria.k__.p__Proteobacteria.c__Betaproteobacteria.o__Neisseriales.f__Neisseriaceae')
+ ) {
+
+ X1<-taxonomy.mean.final[,taxon1]
+ short1<-last.name(taxon1)
+
+ X2<-taxonomy.mean.final[,taxon2]
+ short2<-last.name(taxon2)
+
+ min1<-min(X1[X1>0])
+ max1<-max(X1)
+ min2<-min(X2[X2>0])
+ max2<-max(X2)
+
+ min1r<-10^floor(log10(min1))
+ max1r<-10^ceiling(log10(max1))
+ min2r<-10^floor(log10(min2))
+ max2r<-10^ceiling(log10(max2))
+ tx1<-10^(log10(min1r):log10(max1r))
+ tx2<-10^(log10(min2r):log10(max2r))
+
+ add1<-min(X1[X1>0])/2
+ add2<-min(X2[X2>0])/2
+
+ add1m<-add1/sqrt(10)
+ add2m<-add2/sqrt(10)
+
+ prop000<-sum(X1==0 & X2==0 & decision==0)/sum(X1==0 & X2==0)
+ prop001<-sum(X1==0 & X2==0 & decision==1)/sum(X1==0 & X2==0)
+ prop010<-sum(X1==0 & X2>0 & decision==0)/sum(X1==0 & X2>0)
+ prop011<-sum(X1==0 & X2>0 & decision==1)/sum(X1==0 & X2>0)
+ prop100<-sum(X1>0 & X2==0 & decision==0)/sum(X1>0 & X2==0)
+ prop101<-sum(X1>0 & X2==0 & decision==1)/sum(X1>0 & X2==0)
+ prop110<-sum(X1>0 & X2>0 & decision==0)/sum(X1>0 & X2>0)
+prop111<-sum(X1>0 & X2>0 & decision==1)/sum(X1>0 & X2>0)
+ 
+ x1<-X1
+ x2<-X2
+ x1[X1==0]<-x1[X1==0]+exp(log(add1/9)+(log(add1)-log(add1/9))*runif(length(X1[X1==0]))^(2*(!decision[X1==0])+0.5*decision[X1==0]))
+ x2[X2==0]<-x2[X2==0]+exp(log(add2/9)+(log(add2)-log(add2/9))*runif(length(X2[X2==0]))^(2*(!decision[X2==0])+0.5*decision[X2==0]))
+ x1[X1>0]<-x1[X1>0]+exp(runif(length(X1[X1>0]),log(add1/9),log(add1)))
+ x2[X2>0]<-x2[X2>0]+exp(runif(length(X2[X2>0]),log(add2/9),log(add2)))
+
+
+ bg.h<-'cyan3'
+ bg.d<-'red'
+ tx.h<-'black'
+ tx.d<-'black'
+ par(mar=c(5,5,1,1))
+ plot(x1,x2,col=1+decision,type='n',log='xy',cex=1,cex.lab=1.5,
+      xlim=c(add1/20,max1r),ylim=c(add2/20,max2r*2),
+      xlab=short1,ylab=short2,axes=F)
+ axis(1,at=c(0,tx1)+add1m,labels = c(0,tx1),cex.axis=1)
+ axis(2,at=c(0,tx2)+add2m,labels = c(0,tx2),cex.axis=1)
+ rect(add1/9,add2/9,add1,max2r,col='lightgray',border=NA)
+ rect(add1/9,add2/9,max1r,add2,col='lightgray',border=NA)
+
+ rect(add1,add2/25,max1r,add2/10,col=bg.d,border=NA)
+ rect(add1,add2/25,max1r^prop100*add1^prop101,add2/10,col=bg.h,border=NA)
+ text(sqrt(add1*max1r^prop100*add1^prop101),add2/10/sqrt(2.5),sum(X1>0 & X2==0 & decision==0),col=tx.h,cex=1)
+ text(sqrt(max1r*max1r^prop100*add1^prop101),add2/10/sqrt(2.5),sum(X1>0 & X2==0 & decision==1),col=tx.d,cex=1)
+
+ rect(add1/10,add2/25,add1,add2/10,col=bg.d,border=NA)
+ rect(add1/10,add2/25,add1^prop000*(add1/10)^(prop001),add2/10,col=bg.h,border=NA)
+ text(sqrt(add1/10*add1^prop000*(add1/10)^prop001),add2/10/sqrt(2.5),sum(X1==0 & X2==0 & decision==0),col=tx.h,cex=1)
+ text(sqrt(add1*add1^prop000*(add1/10)^prop001),add2/10/sqrt(2.5),sum(X1==0 & X2==0 & decision==1),col=tx.d,cex=1)
+
+ rect(add1/25,add2,add1/10,max2r,col=bg.d,border=NA)
+ rect(add1/25,add2,add1/10,max2r^prop010*add2^prop011,col=bg.h,border=NA)
+ text(add1/10/sqrt(2.5),sqrt(add2*add2^prop011*max2r^prop010),sum(X1==0 & X2>0 & decision==0),col=tx.h,cex=1,srt=90)
+ text(add1/10/sqrt(2.5),sqrt(max2r*add2^prop011*max2r^prop010),sum(X1==0 & X2>0 & decision==1),col=tx.d,cex=1,srt=90)
+
+ rect(add1,max2r,max1r,max2r*2.5,col=bg.d,border=NA)
+ rect(add1,max2r,max1r^prop110*add1^prop111,max2r*2.5,col=bg.h,border=NA)
+ text(sqrt(add1*max1r^prop110*add1^prop111),max2r*sqrt(2.5),sum(X1>0 & X2>0 & decision==0),col=tx.h,cex=1)
+ text(sqrt(max1r*max1r^prop110*add1^prop111),max2r*sqrt(2.5),sum(X1>0 & X2>0 & decision==1),col=tx.d,cex=1)
+
+ points(x1,x2,col=c(bg.h,bg.d)[1+decision],pch=19,cex=0.66)
+ 
+  OR_01<-(sum(X1>0 & X2==0 & decision==1)/sum(X1>0 & X2==0 & decision==0))/
+  (sum(!(X1>0 & X2==0) & decision==1)/sum(!(X1>0 & X2==0) & decision==0))
+
+ print(paste('Odds ratio for',short1,'and',short2,OR_01))
+}
+
+```
+
 
 ## mean presence and abundance of selected taxons across 30 trials
 
@@ -604,8 +704,40 @@ summary_df$freq_d= P_d
 summary_df$ab_d= A_d
 summary_df$freq_h= P_h
 summary_df$ab_h= A_h
+viz_ig_df<- summary_df
+viz_ig_df$name<- unlist(lapply(viz_ig_df$name, get_deepest_taxonomy_lvl))
+viz_ig_df$partner_name<- unlist(lapply(viz_ig_df$partner_name, get_deepest_taxonomy_lvl))
+rownames(viz_ig_df)<- 1:nrow(viz_ig_df)
+viz_ig_df[,c(2:3) ]<-round(viz_ig_df[,c(2:3)])
+viz_ig_df[,c("ab_h","ab_d","ab")]=viz_ig_df[,c("ab_h","ab_d","ab")]*10000
+viz_ig_df[,8:13]=round(viz_ig_df[,8:13],2)
+viz_ig_df$name[[ which(
+viz_ig_df$name=="s__gamma_proteobacterium_symbiont_of_Gonopsis_affinis"
+)
+]]="s_gp_symb_Gon_aff"
+viz_ig_df$partner_name[[ which(
+  viz_ig_df$partner_name=="s__Mediterranea_massiliensis")
+]]="s_Med_massiliensis"
+```
+## Browse end result
+
+#### feature selection stats:
+
+```{r}
+viz_ig_df[,c("name","IG1D","IG2D","rel_1D","rel_2D","partner_name")]
+
 
 ```
+
+#### mean abundance & frequency
+```{r}
+viz_ig_df[,c("name","freq_h","freq_d","freq",
+             "ab_h","ab_d","ab")]
+
+
+```
+
+
 # Bootstrap resampling validation
 
 Following initial selection of robust features relevant both in 1D and 2D, we validated the results by the use of bootstrap resampling on base resamples themselves.
@@ -723,7 +855,7 @@ for (B in 1:N_TRIALS) {
 #### Count how many times relevant features showed up again and compute mean random forest metrics
 ```{r}
 library(pROC)
-
+source("balanced_decision.R")
 #filename patterns for reading the results
 fs_fpattern<-"MDFS_results/FS_replicate_%d.rds"
 mdfs_fpattern<-"MDFS_results/MDFS_replicate_%d.rds"
@@ -768,11 +900,12 @@ B_RF1<- readRDS(B_rf_fname)$RF_1D
 B_RFall_prob<- predict( B_RF, newdata= B_P[B_oob,], type="prob")[,2]
 B_RF1_prob<- predict( B_RF1, newdata= B_P[B_oob,], type="prob")[,2]
 
-#predicted classes
-B_RFall_cl<-  B_RFall_prob>0.5
-B_RF1_cl<- B_RF1_prob>0.5
 
 B_yoob<- B_y[B_oob]
+
+#predicted classes
+B_RFall_cl<-  balanced.decision(B_RFall_prob,as.factor(B_yoob))$decision
+B_RF1_cl<- balanced.decision(B_RF1_prob,as.factor(B_yoob))$decision
 
 #confusion matrices
 cm_all<- table(Predicted=B_RFall_cl,Actual=B_yoob)
@@ -829,6 +962,10 @@ summary_df$BS_rel2D= times_rel2D_BS[ summary_df$name ]
 viz_df<-summary_df
 viz_df$name<- unlist(lapply(summary_df$name, get_deepest_taxonomy_lvl))
 rownames(viz_df)<-NULL
+viz_df$name[[ which(
+viz_df$name=="s__gamma_proteobacterium_symbiont_of_Gonopsis_affinis"
+)
+]]="s_gp_symb_Gon_aff"
 viz_df[, c("name","rel_1D","BS_rel1D")]
 ```
 
