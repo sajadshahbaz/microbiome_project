@@ -7,6 +7,22 @@ Included in the ile `main_pipeline.Rmd`. See rendered html [here](https://htmlpr
 
 Other scripts contain internal helper functions.
 
+## How to run
+
+One can either ensure the same versions of the software that are listed below are available on his machine and open `.Rmd` file with `RStudio` or run the attached docker image:
+
+```
+sudo docker run --rm 
+	-v.:/home/rstudio
+	-p 8888:8787
+        -e PASSWORD=password            
+	microbiome_rstudio
+```
+
+Afterwards, open `http://localhost:8888/` URL in the browser and use `username=rstudio` and `password=password` credentials to open RStudio Server.
+
+## Used software and packages
+
 ## graded heatmap construction
 
 - `graded_heatmap.R`

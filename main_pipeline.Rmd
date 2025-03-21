@@ -49,10 +49,10 @@ metadata<-metadata[!to_remove_mask, ]
 
 ```{r}
 #1. skip non bacterial taxa
-to_skip_IDX<- c(1:9, 1022:1028)
-tdata<- tdata[,-to_skip_IDX]
+tdata<- tdata[, grep('sk__Bacteria', colnames(tdata)) ]
 print("inital number of taxa samples")
 print(nrow(tdata))
+#2. keep stool samples
 metadata$env_material-> sample_source
 feces_rownames<- rownames(metadata)[ sample_source=="feces" ]
 tdata<-tdata[ intersect(rownames(tdata),feces_rownames),] 
@@ -103,68 +103,58 @@ print("# of samples left after filtering by alpha diversity (with repeating dono
 print(length(common_names))
 print("# of unique donors")
 print(length(unique(metadata$host.subject.id)))
-#saveRDS(taxonomy, "taxonomy_with_repeats.rds")
-#saveRDS(host_id, "host_id_with_repeats.rds")
-#saveRDS(disease, "disease_vector_with_repeats.rds")
 ```
 
 ## Median dataset and cohort summary
 
-```{r}
-y= readRDS("ANY_FOOD_ALLERGY_DECISION.rds")
-common_names<- Reduce(intersect, list( names(y), rownames(metadata), rownames(tdata)))
-print(length(common_names))
-
-```
 
 ```{r}
-
-taxonomy_with_repeatsANDsparseVars <- tdata[common_names,]
-meta_reps <- metadata[common_names,] 
-disease_vector_with_repeats <- y[common_names] 
+y<- 1- metadata$allergic.to.i.have.no.food.allergies.that.i.know.of 
+names(y)<- rownames(metadata)
 library(matrixStats)
 
-ids<-meta_reps$host.subject.id
-names(ids)<-rownames(meta_reps)
+ids<-metadata$host.subject.id
+names(ids)<-rownames(metadata)
 
 donors<-unique(ids)
 
-taxonomy.mean<-matrix(NA,length(donors),ncol(taxonomy_with_repeatsANDsparseVars))
+taxonomy.mean<-matrix(NA,length(donors),ncol(tdata))
 rownames(taxonomy.mean)<-donors
-colnames(taxonomy.mean)<-colnames(taxonomy_with_repeatsANDsparseVars)
+colnames(taxonomy.mean)<-colnames(tdata)
 meta.mean<-as.data.frame(matrix(NA,length(donors),6))
 rownames(meta.mean)<-donors
 colnames(meta.mean)<-c('age','sex','weight.kg','height.cm','BMI_cat','age_cat')
 decision.mean<-numeric(length(donors))
 names(decision.mean)<-donors
 
+if (!file.exists("mean_data.RData")){
 for (i in 1:length(donors)) {
  donor<-donors[i]
  samples<-names(ids)[ids==donor]
  
  #decision
- decs<-disease_vector_with_repeats[samples]
+ decs<-y[samples]
  decision.mean[i]<-floor(median(decs))
  
  #taxa
- taxa<-taxonomy_with_repeatsANDsparseVars[samples,,drop=F]
+ taxa<-tdata[samples,,drop=F]
  taxonomy.mean[i,]<-colMedians(as.matrix(taxa))
  
  #metadata
  #age
- ages<-meta_reps[samples,'age.years']
+ ages<-metadata[samples,'age.years']
  ages<-ages[!is.na(ages)]
  if (length(ages)>0) meta.mean[i,1]<-round(median(ages))
  #sex
- sexes<-meta_reps[samples,'sex']
+ sexes<-metadata[samples,'sex']
  sexes<-sexes[!is.na(sexes)]
  if (length(sexes)>0) meta.mean[i,2]<-names(table(sexes))[which.max(table(sexes))]
  #weight
- weights<-as.numeric(meta_reps[samples,'weight.kg'])
+ weights<-as.numeric(metadata[samples,'weight.kg'])
  weights<-weights[!is.na(weights)]
  if (length(weights)>0) meta.mean[i,3]<-median(weights)
  #height
- heights<-as.numeric(meta_reps[samples,'height.cm'])
+ heights<-as.numeric(metadata[samples,'height.cm'])
  heights<-heights[!is.na(heights)]
  if (length(heights)>0) meta.mean[i,4]<-median(heights)
  
@@ -194,30 +184,31 @@ binary.mean.final<-taxonomy.mean.final*0
 for (i in 1:ncol(binary.mean.final)) binary.mean.final[,i]<-taxonomy.mean.final[,i]>median(taxonomy.mean.final[,i])
 
 save(meta.mean.final,decision.mean.final,taxonomy.mean.final,binary.mean.final,file='mean_data.RData')
+} else {load("mean_data.RData")}
 
 
 #Table 1 
 table(decision.mean)
 
-table(meta.mean.final[decision.mean==0,2])
-table(meta.mean.final[decision.mean==1,2])
+table(meta.mean.final[decision.mean.final==0,2])
+table(meta.mean.final[decision.mean.final==1,2])
 
-fisher.test(rbind(table(meta.mean.final[decision.mean==0,2]),
-            table(meta.mean.final[decision.mean==1,2])))
+fisher.test(rbind(table(meta.mean.final[decision.mean.final==0,2]),
+            table(meta.mean.final[decision.mean.final==1,2])))
             
 
-table(meta.mean.final[decision.mean==0,6])
-table(meta.mean.final[decision.mean==1,6])
+table(meta.mean.final[decision.mean.final==0,6])
+table(meta.mean.final[decision.mean.final==1,6])
 
-fisher.test(rbind(table(meta.mean.final[decision.mean==0,6]),
-                  table(meta.mean.final[decision.mean==1,6])))#,simulate.p.value = T)
+fisher.test(rbind(table(meta.mean.final[decision.mean.final==0,6]),
+                  table(meta.mean.final[decision.mean.final==1,6])))#,simulate.p.value = T)
 
 
-table(meta.mean.final[decision.mean==0,5])
-table(meta.mean.final[decision.mean==1,5])
+table(meta.mean.final[decision.mean.final==0,5])
+table(meta.mean.final[decision.mean.final==1,5])
 
-fisher.test(rbind(table(meta.mean.final[decision.mean==0,5]),
-                  table(meta.mean.final[decision.mean==1,5])))
+fisher.test(rbind(table(meta.mean.final[decision.mean.final==0,5]),
+                  table(meta.mean.final[decision.mean.final==1,5])))
 
 
 
@@ -234,24 +225,22 @@ Function `draw_once_per_host` does following things:
 - filters out sparse taxa according to `min_minority_class_taxa`
 
 ```{r}
-library(matrixStats)
 source("draw_once_per_host2.R")
-#y= 1 - as.numeric(metadata$allergic.to.i.have.no.food.allergies.that.i.know.of)
-#names(y)<-rownames(metadata)
-#y= readRDS("ANY_FOOD_ALLERGY_DECISION.rds")
-host_id<- metadata$host.subject.id#[rownames(metadata) %in% names(y)]
-names(host_id)<- rownames(metadata)#[rownames(metadata) %in% names(y),])
-#base_resamples<- list()
-#start<-Sys.time()
-#for (i in 1:30){
-#  set.seed(i)
-#draw_once_per_host(taxonomy=tdata, disease = y, host_id = host_id,
- #                  min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = FALSE,
-#                   report_progess = FALSE)->base_resamples[[i]]
-#message(sprintf("%d/30 done",i))
-#}
-#print(Sys.time()-start)
-#saveRDS(base_resamples, "base_resamples.rds")
+library(matrixStats)
+host_id<- metadata$host.subject.id
+names(host_id)<- rownames(metadata)
+base_resamples<-list()
+if (!file.exists("base_resamples.rds")){
+for (i in 1:30){
+  set.seed(i)
+draw_once_per_host(taxonomy=tdata, disease = y, host_id = host_id,
+                   min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = FALSE,
+                   report_progess = FALSE)->base_resamples[[i]]
+message(sprintf("%d/30 done",i))
+}
+saveRDS(base_resamples, "base_resamples.rds") } else {
+  base_resamples<-readRDS("base_resamples.rds")
+}
 ```
 
 
