@@ -249,10 +249,8 @@ saveRDS(base_resamples, "base_resamples.rds") } else {
 Perform MDFS in 1D and 2D mode on each of the prepared base resamples.
 
 ```{r}
-#base_resamples<-readRDS("base_resamples.rds")
-load("../randomdataset.RData")
-lapply(randomdataset, function(x) x$agp_sample) -> base_resamples
 library(MDFS)
+if (!file.exists("rel_MDFS_group.RData")) {
 MDFS_1D<-MDFS_2D<-MDFS_1D_relnames<-MDFS_2D_relnames<-MDFS_1D2D_relnames<-list()
 for (i in 1:30){current_seed=i
   set.seed(current_seed)
@@ -298,6 +296,7 @@ relnames_lists <- list(MDFS_1D_rel = MDFS_1D_relnames,
 # Save results
 save(relnames_lists, MDFS_object_lists, 
      file = "rel_MDFS_group.RData")
+} else {load("rel_MDFS_group.RData")}
 ```
 
 ## Integrate results from base resamples 
@@ -410,7 +409,7 @@ We can inspect output from one run, for context. Auxiliary function shortens tax
 partners_per_run[[1]]-> example_out
 
 get_deepest_taxonomy_lvl<- function(taxa_name){
-strsplit(taxa_name,";")-> splitted
+strsplit(taxa_name,"\\.")-> splitted
 splitted[[1]][[ length(splitted[[1]]) ]]
 }
 example_out$rel_name<- unlist(lapply(example_out$rel_name, get_deepest_taxonomy_lvl))
@@ -460,43 +459,91 @@ We calculate mean IG of all selected taxa so far (relevant 30 times in 1D or 2D 
 
 
 ```{r}
+#truly relevant (30 times in 1D or 3D) + partners
 union(base_relevant_set, unname(best_partners_baseRelSet))-> overall_rel_list
+  
+#ugly, but necessary check:
+##ensure that all resamples contain all taxa in overall_rel_list
+stopifnot(
+ lapply(base_resamples, function(x) 
+   all(overall_rel_list %in% colnames(x$taxa_binary)) 
+   ) |> unlist()  |> all() 
+)
 
-#containers of mean IG
-overall_rel_IG1D<- rep(0, length(overall_rel_list))
-overall_rel_IG2D<- rep(0, length(overall_rel_list))
-names(overall_rel_IG1D)<-names(overall_rel_IG2D)<-overall_rel_list
-rel_1D_names<- names(rel_freq[rel_freq_1D==30])
-rel_2D_names<- names(rel_freq[rel_freq_2D==30])
-for (i in seq_along(MDFS_object_lists[[1]])){
-  #taxa present in run "i"
-  resample_present_taxa<-colnames(base_resamples[[i]]$taxa_binary)
-  #found relevant in "i" and relevant 30 times overall
-  intersect(resample_present_taxa, relnames_lists[[1]][[i]]) -> rel1Dtaxa_thisRun
-  intersect(rel1Dtaxa_thisRun, rel_1D_names)-> rel1Dtaxa_thisRun
-  intersect(resample_present_taxa, relnames_lists[[2]][[i]]) -> rel2Dtaxa_thisRun
-  intersect(rel2Dtaxa_thisRun, rel_2D_names)-> rel2Dtaxa_thisRun
-  #their position in run "i"
-  match( rel1Dtaxa_thisRun, resample_present_taxa)-> rel_1D_idx
-  match( rel2Dtaxa_thisRun, resample_present_taxa)-> rel_2D_idx
-  #their IG 
-   MDFS_object_lists[[1]][[i]]$statistic[ rel_1D_idx ] -> IG_1D_resample
-   MDFS_object_lists[[2]][[i]]$statistic[ rel_2D_idx ] -> IG_2D_resample
-   stopifnot(all(rel1Dtaxa_thisRun %in% names(overall_rel_IG1D))) 
-   stopifnot(all(rel2Dtaxa_thisRun %in% names(overall_rel_IG2D))) 
-   #increase sums only for relevant variables from that run
-   overall_rel_IG1D[ rel1Dtaxa_thisRun ] = overall_rel_IG1D[ rel1Dtaxa_thisRun ] + IG_1D_resample
-   overall_rel_IG2D[ rel2Dtaxa_thisRun ] = overall_rel_IG2D[ rel2Dtaxa_thisRun ] + IG_2D_resample
+
+```
+
+```{r}
+
+mean_IG_overRuns<- function(MDFS_objects, taxa_subset, taxa_names_in_resamples){
+  do.call( rbind, mapply( function(mdfs,taxa_names) 
+                            mdfs$statistic[ match(overall_rel_list,taxa_names) ],
+                          MDFS_objects, taxa_names_in_resamples, SIMPLIFY = FALSE
+                          )
+          ) |> colMeans()
 }
-#divide overall_rel_IG by the times each variable was found relevant
-times_rel_overall<- rep(1, length(overall_rel_list))
-names(times_rel_overall)<-overall_rel_list
-times_rel_overall[ names(rel_freq) ] = rel_freq
-overall_rel_IG1D<- overall_rel_IG1D/times_rel_overall
-overall_rel_IG2D<- overall_rel_IG2D/times_rel_overall
 
-#overall_rel_IG1D[ !(overall_rel_list %in% names(rel_freq_1D)[rel_freq_1D==30]) ] =0
-#overall_rel_IG2D[ !(overall_rel_list %in% names(rel_freq_2D)[rel_freq_2D==30]) ] =0
+base_resamples_present_taxa<- lapply(base_resamples, function(x)
+                                      colnames(x$taxa_binary))
+
+overall_rel_IG1D<- mean_IG_overRuns(MDFS_object_lists[[1]],
+                                    overall_rel_list,
+                                    base_resamples_present_taxa
+                                    )
+overall_rel_IG2D<- mean_IG_overRuns(MDFS_object_lists[[2]],
+                                    overall_rel_list,
+                                    base_resamples_present_taxa
+                                    )
+names(overall_rel_IG1D)<-names(overall_rel_IG2D)<-overall_rel_list
+```
+
+```{r}
+# union(base_relevant_set, unname(best_partners_baseRelSet))-> overall_rel_list
+# 
+# #containers of mean IG
+# overall_rel_IG1D<- rep(0, length(overall_rel_list))
+# overall_rel_IG2D<- rep(0, length(overall_rel_list))
+# names(overall_rel_IG1D)<-names(overall_rel_IG2D)<-overall_rel_list
+# rel_1D_names<- names(rel_freq[rel_freq_1D==30])
+# rel_2D_names<- names(rel_freq[rel_freq_2D==30])
+# 
+# get_IG_from_rel_names<- function(taxa_statistic, taxa_names,
+#                           rel_subset_names){
+#   names(taxa_statistic)<- taxa_names
+#   taxa_statistic[rel_subset_names]
+# }
+# 
+# 
+# 
+# for (i in seq_along(MDFS_object_lists[[1]])){
+#   #taxa present in run "i"
+#   resample_present_taxa<-colnames(base_resamples[[i]]$taxa_binary)
+#   #found relevant in "i" and relevant 30 times overall
+#   intersect(resample_present_taxa, relnames_lists[[1]][[i]]) -> rel1Dtaxa_thisRun
+#   intersect(rel1Dtaxa_thisRun, rel_1D_names)-> rel1Dtaxa_thisRun
+#   intersect(resample_present_taxa, relnames_lists[[2]][[i]]) -> rel2Dtaxa_thisRun
+#   intersect(rel2Dtaxa_thisRun, rel_2D_names)-> rel2Dtaxa_thisRun
+#   #their position in run "i"
+#   match( rel1Dtaxa_thisRun, resample_present_taxa)-> rel_1D_idx
+#   match( rel2Dtaxa_thisRun, resample_present_taxa)-> rel_2D_idx
+#   #their IG 
+#    MDFS_object_lists[[1]][[i]]$statistic[ rel_1D_idx ] -> IG_1D_resample
+#    MDFS_object_lists[[2]][[i]]$statistic[ rel_2D_idx ] -> IG_2D_resample
+#    stopifnot(all(rel1Dtaxa_thisRun %in% names(overall_rel_IG1D))) 
+#    stopifnot(all(rel2Dtaxa_thisRun %in% names(overall_rel_IG2D))) 
+#    #increase sums only for relevant variables from that run
+#    overall_rel_IG1D[ rel1Dtaxa_thisRun ] = overall_rel_IG1D[ rel1Dtaxa_thisRun ] + IG_1D_resample
+#    overall_rel_IG2D[ rel2Dtaxa_thisRun ] = overall_rel_IG2D[ rel2Dtaxa_thisRun ] + IG_2D_resample
+# }
+# #divide overall_rel_IG by the times each variable was found relevant
+# times_rel_overall<- rep(1, length(overall_rel_list))
+# names(times_rel_overall)<-overall_rel_list
+# times_rel_overall[ names(rel_freq) ] = rel_freq
+# overall_rel_IG1D<- overall_rel_IG1D/times_rel_overall
+# overall_rel_IG2D<- overall_rel_IG2D/times_rel_overall
+# 
+# #overall_rel_IG1D[ !(overall_rel_list %in% names(rel_freq_1D)[rel_freq_1D==30]) ] =0
+# #overall_rel_IG2D[ !(overall_rel_list %in% names(rel_freq_2D)[rel_freq_2D==30]) ] =0
 ```
 
 ```{r}
@@ -736,7 +783,7 @@ Additionally, to test the usability of detected two dimensional interactions, we
 
 
 
-## Preparation if bootstrap samples (by sampling indexes)
+## Preparation of bootstrap samples (by sampling indexes)
 
 ```{r}
 N_TRIALS=30
@@ -762,7 +809,7 @@ B_idx<- lapply(1:N_TRIALS,
                          )
                        }
                       )
-saveRDS(B_idx,"Bootstrap_IDX.rds")
+#saveRDS(B_idx,"Bootstrap_IDX.rds")
 
 ```
 

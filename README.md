@@ -11,6 +11,27 @@ Other scripts contain internal helper functions.
 
 One can either ensure the same versions of the software that are listed below are available on his machine and open `.Rmd` file with `RStudio` or run the attached docker image:
 
+1. Clone the repo:
+
+```
+git clone https://github.com/sajadshahbaz/microbiome_project
+```
+
+2. Download docker image (1.9GB) and place it into the root directory of the repo:
+
+```
+cd microbiome_project
+wget https://uwbedupl-my.sharepoint.com/:u:/g/personal/p_stomma_pracownik_uwb_edu_pl/EXc3VaKdMA1GuRHUwJjpWN0BN_zbMLjoYFpEU3kQg9wCLQ?download=1 -O micro_rstudio.tar
+```
+
+3. Load the image from file:
+
+```
+docker load -i micro_rstudio.tar
+```
+
+4. Run the image: 
+
 ```
 sudo docker run --rm 
 	-v.:/home/rstudio
@@ -20,6 +41,8 @@ sudo docker run --rm
 ```
 
 Afterwards, open `http://localhost:8888/` URL in the browser and use `username=rstudio` and `password=password` credentials to open RStudio Server.
+
+Open `main_pipeline.Rmd` either through `Files > Open` or by navigating file list in the window in the bottom right section of the screen.
 
 ## Used software and packages
 
