@@ -1010,3 +1010,119 @@ viz_df[, c("name","rel_1D","BS_rel1D")]
 viz_df[, c("name","rel_2D","BS_rel2D")]
 
 ```
+
+### Comparison with SOTA
+
+We ran the similar 2-phase resampling based procedure of feature selection, taking U-test as the feature selector, utilizing the same criteria in terms of level of significance and p-value adjustment (0.05 with holm method correction).
+
+Note that we should not expect purely synergistic taxa to appear in the result of the U-test as it is purely an univariate test.
+In contrast, MDFS can identify features that are not relevant for disease status by themselves.
+
+#### Streamlined process for U-test
+
+Sourced script contains the essential steps needed for estabilishing feature sets found in base resamples and bootstrap validation sets and can work for any feature selection method which is formulated with the same convention as below U-test example function:
+
+- it should accept as necessary input parameters, feature table and response vector
+- it should return a list with fields `p.value`, `adjusted.p.value`, `relevant.variables` and `rel_set` (names of relevant taxa) containing the result
+- optional parameters `lvl`, `p.adjust.method` should control determination of relevant features from raw p-values (if the feature selection method is a statistical filter).
+
+
+
+```{r}
+source("resample_FS_procedure.R")
+U_test_FS
+U_test_FS(base_resamples[[1]]$taxa_abundance, decision = base_resamples[[1]]$disease_status)->xx
+```
+
+```{r}
+resample_FS_procedure(List_base_resamples = base_resamples,
+                      List_bootrap_indexes = B_idx, #list of bootstrap indexes 
+                      FS_function = U_test_FS,
+                      FS_on_binary = FALSE, #do FS on taxa_binary or taxa_abundance
+                      lvl=0.05,
+                      p.adjust.method = "holm"
+                      )-> U_test_rel_Taxa
+```
+
+#### Compare with MDFS
+
+```{r}
+union(summary_df$name, U_test_rel_Taxa$feature_name)-> taxa_by_any_method
+data.frame(name=taxa_by_any_method,
+           `MDFS_1D`=taxa_by_any_method %in% summary_df$name[summary_df$rel_1D==30],
+           `MDFS_2D`=taxa_by_any_method %in% summary_df$name[summary_df$rel_2D==30],
+            `U_test`=taxa_by_any_method %in% U_test_rel_Taxa$feature_name[U_test_rel_Taxa$n_rel_base==30])-> df_base
+df_base[["MDFS_2D_only"]]= df_base[["MDFS_2D"]] & (!df_base[["MDFS_1D"]])
+head(df_base)
+```
+
+First, we can see that none of the features relevant in 2D only appear in univariate U_test.
+
+
+
+```{r}
+print(sum(df_base[df_base$MDFS_2D_only,"U_test"]))
+head(df_base[df_base$MDFS_2D_only,])
+```
+
+
+Second, we can examine the intersection between MDFS 1D, 2D and U-test:
+
+```{r}
+
+generate_crosstab <- function(df) {
+  # Create an empty matrix to store the cross tabulation
+  crosstab_matrix <- matrix(0, nrow = 4, ncol = 4)
+  colnames(crosstab_matrix) <-colnames(df)
+  rownames(crosstab_matrix) <- colnames(df)
+  
+  # Iterate over all pairs of columns
+  for (col1 in colnames(df)) {
+    for (col2 in colnames(df)) {
+      # Calculate the number of times both columns have TRUE in the same row
+      count <- sum(df[[col1]] & df[[col2]], na.rm = TRUE)
+      # Update the crosstab matrix
+      crosstab_matrix[col1, col2] <- count
+    }
+  }
+  crosstab_matrix
+}
+  
+generate_crosstab(df_base[,2:ncol(df_base)])
+```
+
+```{r}
+df_bs<- df_base[,1:(ncol(df_base)-1)]
+print(nrow(df_bs))
+df_bs<- df_bs[ rowSums(df_bs[,2:ncol(df_bs)])>0 ,]
+print(nrow(df_bs))
+for (name in colnames(df_bs)[2:ncol(df_bs)]) df_bs[[name]]= 0
+
+sdf<-summary_df[summary_df$name %in% df_bs$name, ]
+ df_bs[["MDFS_1D"]][ 
+  match(sdf$name,df_bs$name) ]= sdf$rel_1D
+ df_bs[["MDFS_2D"]][ 
+  match(sdf$name,df_bs$name) ]= sdf$rel_2D
+ 
+ udf<-U_test_rel_Taxa[U_test_rel_Taxa$feature_name %in% df_bs$name,]
+ df_bs[["U_test"]][
+   match(udf$feature_name,df_bs$name)
+ ]= udf$n_rel_bs
+
+
+crosstab_at_thr<- function(df, thr1,thr2=NULL){
+  df<-df[,2:ncol(df)]
+  df_b<-df
+  df_b[,]=FALSE
+  df_b[df>=thr1]= TRUE
+  if (!is.null(thr2)) df_b[ df >= thr2 ] = FALSE
+  df_b[["MDFS_2D_only"]]=df_b[["MDFS_2D"]] & (!df_b[["MDFS_1D"]])
+  generate_crosstab(df_b)
+}
+print("confirmed set:")
+crosstab_at_thr(df_bs,30)
+print("plausible set:")
+crosstab_at_thr(df_bs,27,30)
+print("rejected set:")
+crosstab_at_thr(df_bs,1,27)
+```
