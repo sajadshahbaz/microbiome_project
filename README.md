@@ -46,6 +46,24 @@ Open `main_pipeline.Rmd` either through `Files > Open` or by navigating file lis
 
 ## Used software and packages
 
+### Software
+
+R version 4.2.2
+
+#### Additional packages used (from CRAN):
+
+- `pROC_1.18.0`
+- `randomForest_4.7-1.1`
+- `MDFS_1.4.0`
+- `matrixStats_0.63.0`
+- `magrittr_2.0.3`
+
+#### System and hardware requirements:
+
+Docker image emulates `x86_64-pc-linux-gnu (64-bit)` running under `Ubuntu 22.04.4 LTS`.
+
+We have run all the tests on local PC `<specs here>` under `x` time.
+
 ## graded heatmap construction
 
 - `graded_heatmap.R`
