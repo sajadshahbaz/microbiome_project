@@ -4,7 +4,8 @@ draw_once_per_host<- function( taxonomy, disease,host_id,
                                min_minority_class_taxa=20,
                                min_minority_class_dis=30,
                                print_summary=TRUE,
-                               report_progess=FALSE) {
+                               report_progess=FALSE,
+			       binarize_on_median=TRUE	) {
   if (!is.null(dim(disease)))
     stop("disease must be a 1-d atomic vector")
   
@@ -97,7 +98,7 @@ if (report_progess) print("   ...done")
 taxonomy<- as.matrix(taxonomy)
 
 if (report_progess) print("working on binarization")
-meds<-colMedians(taxonomy)
+meds= if (binarize_on_median) colMedians(taxonomy) else rep(0,ncol(taxonomy))
 tb<- t( t(taxonomy)>meds )*1. #exploit recycling mechanism.
 			      #column [[i]] of `taxonomy` gets binarized by meds[[i]]
 #tb2<-tb

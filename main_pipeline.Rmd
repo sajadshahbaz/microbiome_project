@@ -1126,3 +1126,71 @@ crosstab_at_thr(df_bs,27,30)
 print("rejected set:")
 crosstab_at_thr(df_bs,1,27)
 ```
+
+
+### Does binarization affect the result?
+
+```{r}
+source("draw_once_per_host2.R")
+y<- 1- metadata$allergic.to.i.have.no.food.allergies.that.i.know.of 
+names(y)<- rownames(metadata)
+library(matrixStats)
+host_id<- metadata$host.subject.id
+names(host_id)<- rownames(metadata)
+base_resamples_0bin<-list()
+if (!file.exists("base_resamples_0bin.rds")){
+for (i in 1:30){
+  gc()
+  set.seed(i)
+draw_once_per_host(taxonomy=tdata, disease = y, host_id = host_id, binarize_on_median = FALSE,
+                   min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = FALSE,
+                   report_progess = TRUE)->base_resamples_0bin[[i]]
+message(sprintf("%d/30 done",i))
+}
+saveRDS(base_resamples_0bin, "base_resamples_0bin.rds") } else {
+  base_resamples_0bin<-readRDS("base_resamples_0bin.rds")
+}
+
+```
+
+
+```{r}
+#ensure that we have the same donors in two approaches
+stopifnot(all(
+mapply(function(r1,r2) all(r1$host_id==r2$host_id), base_resamples,
+       base_resamples_0bin)
+))
+```
+
+```{r}
+#do all taxa pass min. minority class filter the same?
+all(
+mapply(function(r1,r2) all(colnames(r1$taxa_binary)==colnames(r2$taxa_binary)), base_resamples,
+       base_resamples_0bin)
+)
+```
+
+```{r}
+#how many variables differ betwen methods
+columns_equal<- function(df1,df2) mapply(function(COL1,COL2) all(COL1==COL2),df1,df2 )
+do.call(rbind,mapply(function(r1,r2) c(sum(columns_equal(r1$taxa_binary,r2$taxa_binary)),
+                         ncol(r1$taxa_binary)), base_resamples,base_resamples_0bin,
+       SIMPLIFY=FALSE))
+```
+
+```{r}
+which_cols_differ<- function(df1,df2) mapply(function(COL1,COL2) 
+   !all(COL1==COL2) ,df1,df2 )
+Reduce(union,mapply(function(r1,r2) colnames(r1$taxa_binary)[which_cols_differ(r1$taxa_binary,
+                                                                               r2$taxa_binary)], base_resamples,base_resamples_0bin,
+       SIMPLIFY=FALSE))-> common_taxa
+```
+
+```{r}
+plot(unname(colSums(tdata[,common_taxa]>0)/nrow(tdata)) |> sort(),
+     main="% of non zero cells for common variables")
+```
+
+```{r}
+unname(-colSums(tdata[,common_taxa]>0)+nrow(tdata))
+```
