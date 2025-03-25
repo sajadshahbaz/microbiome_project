@@ -188,7 +188,7 @@ save(meta.mean.final,decision.mean.final,taxonomy.mean.final,binary.mean.final,f
 
 
 #Table 1 
-table(decision.mean)
+table(decision.mean.final)
 
 table(meta.mean.final[decision.mean.final==0,2])
 table(meta.mean.final[decision.mean.final==1,2])
@@ -578,7 +578,7 @@ ig_df<- ig_df[ order(-ig_df$IG2D),]
 
 ## Interaction plots
 
-Based on median dataset and results of above computations, we show plots of abundance of Bergeyella vs abundance of Neissseria.
+Based on median dataset and results of above computations, we show plots of abundance of Bergeyella vs abundance of Neisseria.
 
 Due to zero inflation, to make the "absence" state more visble, plot visualizes zeroes (samples where one of the bacteria is absent) as values evenly distributed on a small interval around 0 (signified by grey bands).
 
@@ -1193,4 +1193,49 @@ plot(unname(colSums(tdata[,common_taxa]>0)/nrow(tdata)) |> sort(),
 
 ```{r}
 unname(-colSums(tdata[,common_taxa]>0)+nrow(tdata))
+```
+
+### MDFS 3D test
+
+Run on median dataset, done on HPC cluster using `mdfs_3d_test.R` script.
+
+```{r}
+readRDS("MDFS_3D_result.rds")-> MDFS_3D
+
+colnames(taxonomy.mean.final)[MDFS_3D$relevant.variables]-> taxa_3D
+
+setdiff(taxa_3D,any_times_relevant_taxa)
+```
+
+### Different subtypes of food allergy
+
+
+Main steps of the pipeline are contained in `resampled_MDFS_analysis.R` and include:
+
+- resampling of the dataset - picking 1 sample per each repeating donor
+- adjustment for the decision variable used - removal of variables with low counts in one of the classes
+- feature selection using MDFS
+- selection of consistently relevant taxa
+- picking of the best partners for the relevant taxa
+
+
+```{r}
+decisions=c("allergic_to_peanuts", "allergic_to_shellfish", "allergic_to_tree_nuts")
+decision_results<- list()
+source("resampled_MDFS_analysis.R")
+for (i in seq_along(decisions)){
+seeds<-sample.int(343242,30)
+print(sprintf("working on %s",decisions[[i]]))
+resample_MDFS(metadata = metadata, taxonomy = tdata, 
+              decision_colname=decisions[[i]],
+			         n_resamples=30,
+			         seeds=seeds,
+			          host_id_colname="host.subject.id",
+			            #passed to draw_once_per_host
+                   	 min_minority_class_taxa =20, 
+			            min_minority_class_dis = 30,
+			          binarize_on_median=TRUE,
+			          print_summary = FALSE,
+                report_progess = TRUE)-> decision_results[[i]]
+}
 ```
