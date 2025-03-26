@@ -1207,6 +1207,66 @@ colnames(taxonomy.mean.final)[MDFS_3D$relevant.variables]-> taxa_3D
 setdiff(taxa_3D,any_times_relevant_taxa)
 ```
 
+```{r}
+
+union(taxa_3D, base_relevant_set)-> all_relevant_123D
+
+MDFS_3D$statistic-> stat_3D
+colnames(taxonomy.mean.final)->names(stat_3D)
+
+rel_1D_only<- names(rel_freq_1D)[(rel_freq_1D==30) & (rel_freq_2D<30)]
+rel_2D_only<- names(rel_freq_1D)[(rel_freq_2D==30)]
+rel_3D_only<- setdiff(all_relevant_123D, any_times_relevant_taxa)
+
+plot_colors<- ifelse(all_relevant_123D %in% rel_1D_only, "red",
+                     ifelse(all_relevant_123D %in% rel_2D_only, "blue",
+                            ifelse(all_relevant_123D %in% rel_3D_only, "green", "gray")))
+
+stat_3D[all_relevant_123D]-> stat_3D_plot
+order(-stat_3D_plot)->order_3D
+stat_3D_plot<-stat_3D_plot[order_3D]
+plot_colors<-plot_colors[order_3D]
+
+names(stat_3D_plot)<- lapply(names(stat_3D_plot), get_deepest_taxonomy_lvl) |> unlist()
+par(mar = c(8, 4, 4, 2))  # Adjust the margin on the bottom (first value)
+barplot(stat_3D_plot[1:30], main="MDFS 3D statistics for relevant taxa",
+        col = plot_colors[1:30],
+        las=3,cex.names = 0.65, ylab="IG (3D)")
+legend("topright", pch=15, col=c("blue","green"), legend=c("2D relevant","3D only"))
+abline(h=80, lty="dotted")
+abline(h=70, lty="dotted")
+abline(h=90, lty="dotted")
+abline(h=60, lty="dotted")
+abline(h=50, lty="dotted")
+
+```
+
+####Compare with U-test
+
+```{r}
+intersect(setdiff(taxa_3D,any_times_relevant_taxa), xx$rel_set)-> only_3D_but_Utest
+unname(cbind(stat_3D[only_3D_but_Utest],
+      lapply(only_3D_but_Utest, get_deepest_taxonomy_lvl) |> unlist(),
+      xx$adjusted.p.value[xx$relevant.variables][match(only_3D_but_Utest,xx$rel_set)]))->df_comparison
+
+colnames(df_comparison)<- c("IG","taxon","U_test.adjusted.p.value")
+      df_comparison
+
+
+```
+```{r}
+x=base_resamples[[1]]$taxa_abundance[,"sk__Bacteria.k__.p__Proteobacteria.c__Gammaproteobacteria.o__Pseudomonadales.f__Pseudomonadaceae.g__Pseudomonas"]
+ y=base_resamples[[1]]$disease_status
+ x[(y==0)&(x!=0)]->x0
+ x[(y==1)&(x!=0)]->x1
+ range(c(x0,x1))->x01rng
+ seq(from=x01rng[[1]],to=x01rng[[2]],length.out=20)->brks
+ hist(x[(y==0)&(x!=0)], plot=FALSE,breaks=brks)->h1
+ hist(x[(y==1)&(x!=0)], plot=FALSE,breaks=brks)->h2
+ plot(h2$mids, h2$counts, lwd=2, type="line", col="green",log='y')
+ lines(h1$mids, h1$counts, lwd=2, col="red")
+```
+
 ### Different subtypes of food allergy
 
 
@@ -1224,6 +1284,7 @@ decisions=c("allergic_to_peanuts", "allergic_to_shellfish", "allergic_to_tree_nu
 decision_results<- list()
 source("resampled_MDFS_analysis.R")
 for (i in seq_along(decisions)){
+  set.seed(i)
 seeds<-sample.int(343242,30)
 print(sprintf("working on %s",decisions[[i]]))
 resample_MDFS(metadata = metadata, taxonomy = tdata, 
