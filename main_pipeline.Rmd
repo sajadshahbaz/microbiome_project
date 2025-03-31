@@ -1,7 +1,10 @@
 ---
 title: "Information Theory and Machine Learning Reveal Synergistic Interactions in
   Gut Microbiota Related to Food Allergy - data analysis pipeline"
-output: html_document
+output:
+  html_document:
+    toc: true
+    theme: united
 ---
 
 ```{r setup, include=FALSE}
@@ -246,37 +249,33 @@ saveRDS(base_resamples, "base_resamples.rds") } else {
 
 ## Feature selection
 
-Perform MDFS in 1D and 2D mode on each of the prepared base resamples.
+Perform discrete variant of MDFS in 1D and 2D mode on each of the prepared base resamples.
 
 ```{r}
 library(MDFS)
 if (!file.exists("rel_MDFS_group.RData")) {
 MDFS_1D<-MDFS_2D<-MDFS_1D_relnames<-MDFS_2D_relnames<-MDFS_1D2D_relnames<-list()
 for (i in 1:30){current_seed=i
+gc()
   set.seed(current_seed)
   # Perform MDFS with 1D
-  MDFS_1D_result <- MDFS(
+  MDFS_1D_result <- MDFS.discrete(
     data = base_resamples[[i]]$taxa_binary,
     decision = base_resamples[[i]]$disease_status,
     dimensions = 1,
-    divisions = 1,
-    discretizations = 1,
-    range = 0,
     seed= current_seed,  # Set the seed for reproducibility
     level = 0.05
   )
 
   MDFS_1D[[i]] <- MDFS_1D_result
   MDFS_1D_relnames[[i]] <- colnames(base_resamples[[i]]$taxa_binary)[MDFS_1D_result$relevant.variables]
-
+gc()
+set.seed(current_seed)
   # Perform MDFS with 2D
-  MDFS_2D_result <- MDFS(
+  MDFS_2D_result <- MDFS.discrete(
     data = base_resamples[[i]]$taxa_binary,
     decision = base_resamples[[i]]$disease_status,
     dimensions = 2,
-    divisions = 1,
-    discretizations = 1,
-    range = 0,
     seed = current_seed,
     level = 0.05
   )
@@ -296,7 +295,7 @@ relnames_lists <- list(MDFS_1D_rel = MDFS_1D_relnames,
 # Save results
 save(relnames_lists, MDFS_object_lists, 
      file = "rel_MDFS_group.RData")
-} else {load("rel_MDFS_group.RData")}
+} else { message("loading data");load("rel_MDFS_group.RData")}
 ```
 
 ## Integrate results from base resamples 
@@ -358,7 +357,7 @@ if (!(all(interesting.vars %in% 1:ncol(dataset))))
 if (is.null(colnames(dataset)))
         stop("datatset should have column names (taxa names)")
 
-best.tuples <- ComputeInterestingTuples(dataset,
+best.tuples <- ComputeInterestingTuplesDiscrete(dataset,
                                         decision,
                                         interesting.vars =interesting.vars,                                         ...
                                           )
@@ -393,7 +392,7 @@ partners_per_run[[i_set]] <-
 get_interaction_partner(dataset=base_resamples[[i_set]]$taxa_binary,
                          decision=base_resamples[[i_set]]$disease_status,
                      interesting.vars=MDFS_object_lists[[2]][[i_set]]$relevant.variables ,
-                        range=0, dimensions=2)
+                         dimensions=2)
 
 }
 
@@ -1204,7 +1203,7 @@ readRDS("MDFS_3D_result.rds")-> MDFS_3D
 
 colnames(taxonomy.mean.final)[MDFS_3D$relevant.variables]-> taxa_3D
 
-setdiff(taxa_3D,any_times_relevant_taxa)
+setdiff(taxa_3D,any_times_relevant_taxa)-> taxa_3D_ONLY
 ```
 
 ```{r}
@@ -1265,6 +1264,137 @@ x=base_resamples[[1]]$taxa_abundance[,"sk__Bacteria.k__.p__Proteobacteria.c__Gam
  hist(x[(y==1)&(x!=0)], plot=FALSE,breaks=brks)->h2
  plot(h2$mids, h2$counts, lwd=2, type="line", col="green",log='y')
  lines(h1$mids, h1$counts, lwd=2, col="red")
+```
+
+#### Redo 2D analysis on median dataset
+
+```{r}
+library(MDFS)
+base_resamples<-readRDS("base_resamples.rds")
+ MDFS_1D_result_ab <- MDFS(
+    data = base_resamples[[1]]$taxa_abundance, #taxonomy.mean.final, # 
+    decision = base_resamples[[1]]$disease_status, #decision.mean.final, 
+    dimensions = 1,
+    divisions = 1,
+    discretizations = 1,
+    range = 0,
+    seed = 1,
+    level = 0.05
+  )
+  MDFS_1D_result_bin <- MDFS(
+    data = base_resamples[[1]]$taxa_binary, #taxonomy.mean.final, # 
+    decision = base_resamples[[1]]$disease_status, #decision.mean.final, 
+    dimensions = 1,
+    divisions = 1,
+    discretizations = 1,
+    range = 0,
+    seed = 1,
+    level = 0.05
+  )
+
+```
+
+#### MDFS::Discretize at fault?
+
+```{r}
+base_data<- base_resamples[[1]]
+pseudomonas_name<-"sk__Bacteria.k__.p__Proteobacteria.c__Gammaproteobacteria.o__Pseudomonadales.f__Pseudomonadaceae.g__Pseudomonas"
+
+MDFS::Discretize(base_data$taxa_abundance,
+                 variable.idx = which(colnames(base_data$taxa_abundance)==
+                                  pseudomonas_name),
+                 divisions = 1,range=0,discretization.nr=1, seed=123
+                                         )-> pseudomonas_ab_MDFS_discretized # dyskretyzowane abundance z MDFS
+
+
+pseudomonas_bin_median_discr<- base_resamples[[1]]$taxa_binary[,pseudomonas_name] # dyskretyzowane binarnie z miediany
+
+
+print("MDFS abundance binarized vs manual median binarized")
+print(
+table(pseudomonas_bin_median_discr, pseudomonas_ab_MDFS_discretized)
+)
+
+
+
+# binarny wstawiony w MDFS::Discretize
+MDFS::Discretize(base_data$taxa_binary,
+                 variable.idx = which(colnames(base_data$taxa_abundance)==
+                                  pseudomonas_name),
+                 divisions = 1,range=0,discretization.nr=1, seed=123
+                                         )-> pseudomonas_bin_MDFS_discretized # dyskretyzowane abundance z MDFS
+
+
+
+print("MDFS::Discretize(median binarized variable) vs manual median binarized")
+print(
+table(pseudomonas_bin_median_discr, pseudomonas_bin_MDFS_discretized)
+)
+
+
+
+```
+
+```{r}
+pseudomonas_name %in% colnames(base_resamples[[1]]$taxa_binary)[MDFS_1D_result_ab$relevant.variables]
+pseudomonas_name %in% colnames(base_resamples[[1]]$taxa_binary)[MDFS_1D_result_bin$relevant.variables]
+
+
+```
+```{r}
+ colnames(base_resamples[[1]]$taxa_binary)-> b1_tnames
+MDFS_1D_result_ab$statistic[MDFS_1D_result_ab$relevant.variables]-> b1_stat_ab
+MDFS_1D_result_bin$statistic[MDFS_1D_result_ab$relevant.variables]-> b1_stat_bin
+data.frame(ab=round(b1_stat_ab,4),bin=round(b1_stat_bin,4),name=lapply(b1_tnames[MDFS_1D_result_ab$relevant.variables], 
+                                    get_deepest_taxonomy_lvl) |> unlist())->df_ab_vs_bin_stat
+
+df_ab_vs_bin_stat[order(-df_ab_vs_bin_stat$ab),]
+
+```
+
+
+
+```{r}
+MDFS::Discretize(base_resamples[[1]]$taxa_abundance,
+                 variable.idx = which(colnames(base_resamples[[1]]$taxa_abundance)==
+                                  "sk__Bacteria.k__.p__Proteobacteria.c__Gammaproteobacteria.o__Pseudomonadales.f__Pseudomonadaceae.g__Pseudomonas"),
+                 divisions = 1,range=0,discretization.nr=1, seed=123
+                                         )-> pseudomonas_MDFS_discr
+```
+
+```{r}
+MDFS::Discretize(base_resamples[[1]]$taxa_binary,
+                 variable.idx = which(colnames(base_resamples[[1]]$taxa_abundance)==
+                                  "sk__Bacteria.k__.p__Proteobacteria.c__Gammaproteobacteria.o__Pseudomonadales.f__Pseudomonadaceae.g__Pseudomonas"),
+                 divisions = 1,range=0,discretization.nr=1, seed=123
+                                         )-> pseudomonas_bin_MDFS_discr
+
+```
+
+
+```{r}
+base_resamples[[1]]$taxa_binary[,
+                                  "sk__Bacteria.k__.p__Proteobacteria.c__Gammaproteobacteria.o__Pseudomonadales.f__Pseudomonadaceae.g__Pseudomonas"]->pseudomonas_bin
+```
+
+```{r}
+base_resamples[[1]]$taxa_abundance[,
+                                  "sk__Bacteria.k__.p__Proteobacteria.c__Gammaproteobacteria.o__Pseudomonadales.f__Pseudomonadaceae.g__Pseudomonas"]->pseudomonas_ab
+```
+
+```{r}
+
+table(pseudomonas_bin, pseudomonas_MDFS_discr)
+table(pseudomonas_bin, pseudomonas_bin_MDFS_discr)
+
+```
+
+```{r}
+
+colnames(base_resamples[[1]]$taxa_binary)[MDFS_2D_result_mean$relevant.variables]
+#colnames(taxonomy.mean.final)[MDFS_2D_result_mean$relevant.variables]
+
+
 ```
 
 ### Different subtypes of food allergy

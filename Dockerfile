@@ -4,9 +4,11 @@ RUN install2.r --error --skipinstalled --ncpus -1 \
     rmarkdown \
     magrittr \
     matrixStats \
-    MDFS \
     randomForest \
+    remotes \
     pROC 
+
+RUN Rscript -e 'remotes::install_github("https://github.com/p100mma/mdfs-r")'
 
 
 WORKDIR [ "/home/rstudio" ]
