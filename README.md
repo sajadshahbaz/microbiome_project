@@ -33,10 +33,10 @@ docker load -i micro_rstudio.tar
 4. Run the image: 
 
 ```
-sudo docker run --rm 
-	-v.:/home/rstudio
-	-p 8888:8787
-        -e PASSWORD=password            
+sudo docker run --rm \
+	-v.:/home/rstudio \
+	-p 8888:8787 \
+        -e PASSWORD=password \            
 	microbiome_rstudio
 ```
 
