@@ -830,25 +830,21 @@ for (B in 1:N_TRIALS) {
     set.seed(session_seeds[[B]])
 #FS
    if (!file.exists( sprintf("MDFS_results/MDFS_replicate_%d.rds", B ) ) ) {
-    MDFS_1D<- MDFS(
+     gc()
+    MDFS_1D<- MDFS.discrete(
     data = set_B$taxa_binary[IDX_B,],
     decision = set_B$disease_status[IDX_B],
     dimensions = 1,
-    divisions = 1,
-    discretizations = 1,
-    range = 0,
     seed= session_seeds[[B]], 
     level = 0.05
     )
     rel_1D<- colnames(set_B$taxa_binary)[MDFS_1D$relevant.variables]
     # Perform MDFS with 2D
+    gc()
     MDFS_2D<- MDFS(
     data = set_B$taxa_binary[IDX_B,],
     decision = set_B$disease_status[IDX_B],
     dimensions = 2,
-    divisions = 1,
-    discretizations = 1,
-    range = 0,
     seed = session_seeds[[B]],
     level = 0.05
     )
@@ -867,11 +863,14 @@ for (B in 1:N_TRIALS) {
     #RF
 	if ( ! file.exists( sprintf("RF_models/RF_replicate_%d.rds",B)) ) {
     unique(IDX_B)-> uqIDX_B
+	  gc()
     set.seed(session_seeds[[B]])
     randomForest(x = set_B$taxa_binary[uqIDX_B, consensus_1D],
                 y =  as.factor(set_B$disease_status[uqIDX_B]),
                 importance = TRUE,
                 keep.forest = TRUE)-> RF_1D
+    gc()
+    set.seed(session_seeds[[B]])
     randomForest(x = set_B$taxa_binary[uqIDX_B, consensus_AllRelevant],
                 y =  as.factor(set_B$disease_status[uqIDX_B]),
                 importance = TRUE,
@@ -950,18 +949,18 @@ CM1_trials[[B]]<- cm_1
 CMall_trials[[B]]<- cm_all
 
 
-RFall_score<- c(auc= auc(response=B_yoob, predictor= B_RFall_prob),
+RFall_score<- c(auc= auc(response=B_yoob, predictor= B_RFall_prob,quiet=TRUE),
 		OR=odds_ratio(cm_all),
 		acc= sum( B_yoob == B_RFall_cl)/length(B_yoob)
 )
-RF1_score<- c(auc= auc(response=B_yoob, predictor= B_RF1_prob),
+RF1_score<- c(auc= auc(response=B_yoob, predictor= B_RF1_prob,quiet=TRUE),
 	      OR=odds_ratio(cm_1),
 		acc= sum( B_yoob == B_RF1_cl)/length(B_yoob)
 	      )
 
 RF1_trials[[B]]<- RF1_score
 RFall_trials[[B]]<- RFall_score
-
+message(sprintf("%d/%d done", B, N_TRIALS))
 
 }
 
@@ -1010,7 +1009,7 @@ viz_df[, c("name","rel_2D","BS_rel2D")]
 
 ```
 
-### Comparison with SOTA
+# Comparison with SOTA
 
 We ran the similar 2-phase resampling based procedure of feature selection, taking U-test as the feature selector, utilizing the same criteria in terms of level of significance and p-value adjustment (0.05 with holm method correction).
 
