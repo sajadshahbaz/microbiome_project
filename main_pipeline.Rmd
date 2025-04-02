@@ -589,12 +589,19 @@ last.name<-function(x,sep='\\.',n=1) {
 
 decision<-decision.mean.final
 
-taxon2<-'sk__Bacteria.k__.p__Bacteroidetes.c__Flavobacteriia.o__Flavobacteriales.f__Flavobacteriaceae.g__Bergeyella'
+taxa_pairlist<- list(c(
+'sk__Bacteria.k__.p__Bacteroidetes.c__Flavobacteriia.o__Flavobacteriales.f__Flavobacteriaceae.g__Bergeyella',
+'sk__Bacteria.k__.p__Proteobacteria.c__Betaproteobacteria.o__Neisseriales.f__Neisseriaceae.g__Neisseria'
+),
+c('sk__Bacteria.k__.p__Bacteroidetes.c__Flavobacteriia.o__Flavobacteriales.f__Flavobacteriaceae.g__Bergeyella',
+  'sk__Bacteria.k__.p__Proteobacteria.c__Betaproteobacteria.o__Neisseriales.f__Neisseriaceae'
+),
+ig_df[grep( "g__Pseudomonas", ig_df$name),c("name","partner_name")] |> unlist() |> unname()
+)
 
-for (taxon1 in c(
- 'sk__Bacteria.k__.p__Proteobacteria.c__Betaproteobacteria.o__Neisseriales.f__Neisseriaceae.g__Neisseria',
- 'sk__Bacteria.k__.p__Proteobacteria.c__Betaproteobacteria.o__Neisseriales.f__Neisseriaceae')
- ) {
+for (tp in taxa_pairlist) {
+  taxon1=tp[1]
+  taxon2=tp[2]
 
  X1<-taxonomy.mean.final[,taxon1]
  short1<-last.name(taxon1)
@@ -841,7 +848,7 @@ for (B in 1:N_TRIALS) {
     rel_1D<- colnames(set_B$taxa_binary)[MDFS_1D$relevant.variables]
     # Perform MDFS with 2D
     gc()
-    MDFS_2D<- MDFS(
+    MDFS_2D<- MDFS.discrete(
     data = set_B$taxa_binary[IDX_B,],
     decision = set_B$disease_status[IDX_B],
     dimensions = 2,
@@ -1088,43 +1095,11 @@ generate_crosstab <- function(df) {
   
 generate_crosstab(df_base[,2:ncol(df_base)])
 ```
-
 ```{r}
-df_bs<- df_base[,1:(ncol(df_base)-1)]
-print(nrow(df_bs))
-df_bs<- df_bs[ rowSums(df_bs[,2:ncol(df_bs)])>0 ,]
-print(nrow(df_bs))
-for (name in colnames(df_bs)[2:ncol(df_bs)]) df_bs[[name]]= 0
 
-sdf<-summary_df[summary_df$name %in% df_bs$name, ]
- df_bs[["MDFS_1D"]][ 
-  match(sdf$name,df_bs$name) ]= sdf$rel_1D
- df_bs[["MDFS_2D"]][ 
-  match(sdf$name,df_bs$name) ]= sdf$rel_2D
- 
- udf<-U_test_rel_Taxa[U_test_rel_Taxa$feature_name %in% df_bs$name,]
- df_bs[["U_test"]][
-   match(udf$feature_name,df_bs$name)
- ]= udf$n_rel_bs
+df_base[df_base$U_test & (!(df_base$MDFS_2D | df_base$MDFS_1D)), ]$name -> U_test_only_taxa
 
-
-crosstab_at_thr<- function(df, thr1,thr2=NULL){
-  df<-df[,2:ncol(df)]
-  df_b<-df
-  df_b[,]=FALSE
-  df_b[df>=thr1]= TRUE
-  if (!is.null(thr2)) df_b[ df >= thr2 ] = FALSE
-  df_b[["MDFS_2D_only"]]=df_b[["MDFS_2D"]] & (!df_b[["MDFS_1D"]])
-  generate_crosstab(df_b)
-}
-print("confirmed set:")
-crosstab_at_thr(df_bs,30)
-print("plausible set:")
-crosstab_at_thr(df_bs,27,30)
-print("rejected set:")
-crosstab_at_thr(df_bs,1,27)
 ```
-
 
 ### Does binarization affect the result?
 
@@ -1177,9 +1152,9 @@ do.call(rbind,mapply(function(r1,r2) c(sum(columns_equal(r1$taxa_binary,r2$taxa_
 ```
 
 ```{r}
-which_cols_differ<- function(df1,df2) mapply(function(COL1,COL2) 
+which.cols.differ<- function(df1,df2) mapply(function(COL1,COL2) 
    !all(COL1==COL2) ,df1,df2 )
-Reduce(union,mapply(function(r1,r2) colnames(r1$taxa_binary)[which_cols_differ(r1$taxa_binary,
+Reduce(union,mapply(function(r1,r2) colnames(r1$taxa_binary)[which.cols.differ(r1$taxa_binary,
                                                                                r2$taxa_binary)], base_resamples,base_resamples_0bin,
        SIMPLIFY=FALSE))-> common_taxa
 ```
@@ -1189,8 +1164,25 @@ plot(unname(colSums(tdata[,common_taxa]>0)/nrow(tdata)) |> sort(),
      main="% of non zero cells for common variables")
 ```
 
+
+#### U_test vs taxa binarized differently
+
 ```{r}
-unname(-colSums(tdata[,common_taxa]>0)+nrow(tdata))
+print("taxa found only by U test and discretized differently")
+data.frame(name=U_test_only_taxa, different_discr= U_test_only_taxa %in% common_taxa)
+```
+```{r}
+xx$adjusted.p.value[xx$relevant.variables]-> U_test_pvs
+names(U_test_pvs)<-xx$rel_set
+data.frame(names=lapply(U_test_only_taxa, get_deepest_taxonomy_lvl) |> unlist() |> unname(),
+            IG_1D= MDFS_object_lists[[1]][[1]]$statistic[ match(U_test_only_taxa,colnames(base_resamples[[1]]$taxa_binary) ) ],
+           IG_2D= MDFS_object_lists[[2]][[1]]$statistic[ match(U_test_only_taxa,colnames(base_resamples[[1]]$taxa_binary) ) ],
+U_pv=U_test_pvs[U_test_only_taxa],
+different_discr= U_test_only_taxa %in% common_taxa,
+freq=  colMeans(base_resamples[[1]]$taxa_binary[,U_test_only_taxa])
+      )-> utest_only_summary
+rownames(utest_only_summary)<-NULL
+t(utest_only_summary)
 ```
 
 ### MDFS 3D test
