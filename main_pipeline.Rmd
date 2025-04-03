@@ -1051,6 +1051,8 @@ resample_FS_procedure(List_base_resamples = base_resamples,
 
 #### Compare with MDFS
 
+##### 'base' resamples
+
 ```{r}
 union(summary_df$name, U_test_rel_Taxa$feature_name)-> taxa_by_any_method
 data.frame(name=taxa_by_any_method,
@@ -1099,9 +1101,38 @@ generate_crosstab(df_base[,2:ncol(df_base)])
 
 df_base[df_base$U_test & (!(df_base$MDFS_2D | df_base$MDFS_1D)), ]$name -> U_test_only_taxa
 
+U_test_only_taxa
+
+data.frame(names=U_test_only_taxa,
+           IG1D=MDFS_object_lists[[1]][[1]]$statistic[ match(U_test_only_taxa, colnames(base_resamples[[1]]$taxa_binary)) ],
+           IG2D=MDFS_object_lists[[2]][[1]]$statistic[ match(U_test_only_taxa, colnames(base_resamples[[1]]$taxa_binary)) ],
+           pvU= xx$adjusted.p.value[ match(U_test_only_taxa, colnames(base_resamples[[1]]$taxa_binary),  ) ]
+           )
+
 ```
 
-### Does binarization affect the result?
+
+##### final resampled test
+
+```{r}
+data.frame(name=taxa_by_any_method,
+           `MDFS_1D`=taxa_by_any_method %in% summary_df$name[summary_df$BS_rel1D==30],
+           `MDFS_2D`=taxa_by_any_method %in% summary_df$name[summary_df$BS_rel2D==30],
+            `U_test`=taxa_by_any_method %in% U_test_rel_Taxa$feature_name[U_test_rel_Taxa$n_rel_bs==30])-> df_bs
+df_bs[["MDFS_2D_only"]]= df_bs[["MDFS_2D"]] & (!df_bs[["MDFS_1D"]])
+generate_crosstab(df_bs[,2:ncol(df_bs)])
+```
+
+```{r}
+df_bs[df_bs$U_test & (!(df_bs$MDFS_2D | df_bs$MDFS_1D)), ]$name -> U_test_only_taxa_BS
+
+U_test_only_taxa_BS
+
+
+```
+
+
+# Does binarization affect the result?
 
 ```{r}
 source("draw_once_per_host2.R")
@@ -1165,25 +1196,6 @@ plot(unname(colSums(tdata[,common_taxa]>0)/nrow(tdata)) |> sort(),
 ```
 
 
-#### U_test vs taxa binarized differently
-
-```{r}
-print("taxa found only by U test and discretized differently")
-data.frame(name=U_test_only_taxa, different_discr= U_test_only_taxa %in% common_taxa)
-```
-```{r}
-xx$adjusted.p.value[xx$relevant.variables]-> U_test_pvs
-names(U_test_pvs)<-xx$rel_set
-data.frame(names=lapply(U_test_only_taxa, get_deepest_taxonomy_lvl) |> unlist() |> unname(),
-            IG_1D= MDFS_object_lists[[1]][[1]]$statistic[ match(U_test_only_taxa,colnames(base_resamples[[1]]$taxa_binary) ) ],
-           IG_2D= MDFS_object_lists[[2]][[1]]$statistic[ match(U_test_only_taxa,colnames(base_resamples[[1]]$taxa_binary) ) ],
-U_pv=U_test_pvs[U_test_only_taxa],
-different_discr= U_test_only_taxa %in% common_taxa,
-freq=  colMeans(base_resamples[[1]]$taxa_binary[,U_test_only_taxa])
-      )-> utest_only_summary
-rownames(utest_only_summary)<-NULL
-t(utest_only_summary)
-```
 
 ### MDFS 3D test
 
