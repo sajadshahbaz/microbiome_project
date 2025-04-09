@@ -476,7 +476,7 @@ stopifnot(
 
 mean_IG_overRuns<- function(MDFS_objects, taxa_subset, taxa_names_in_resamples){
   do.call( rbind, mapply( function(mdfs,taxa_names) 
-                            mdfs$statistic[ match(overall_rel_list,taxa_names) ],
+                            mdfs$statistic[ match(taxa_subset,taxa_names) ],
                           MDFS_objects, taxa_names_in_resamples, SIMPLIFY = FALSE
                           )
           ) |> colMeans()
@@ -1195,6 +1195,57 @@ plot(unname(colSums(tdata[,common_taxa]>0)/nrow(tdata)) |> sort(),
      main="% of non zero cells for common variables")
 ```
 
+
+
+## MDFS pipeline on new binarization
+
+```{r}
+source("MDFS_analysis_pipeline.R")
+
+base_MDFS_end2end(baseResamples = base_resamples_0bin, variant_name = "FA_0bin")-> df_0bin_base
+
+```
+
+```{r}
+print("total numbers found (relevant + partners):")
+df_0bin_base |> nrow()
+summary_df |> nrow()
+
+df_0bin_base$name[ !df_0bin_base$partner_only ] -> relevant_in0bin
+summary_df$name[ !summary_df$partner_only ] -> relevant_inMEDbin
+print("relevant set sizes (excluding partners):")
+print("common part size:")
+length(intersect(relevant_in0bin, relevant_inMEDbin))
+print("found by median method, not by 0")
+length(setdiff(relevant_inMEDbin, relevant_in0bin))
+print("found by 0, not by median")
+length(setdiff(relevant_in0bin, relevant_inMEDbin))
+
+
+
+```
+
+### bootstrap resampling
+
+```{r}
+source("MDFS_analysis_pipeline.R")
+
+bootstrap_MDFS(b_idx=B_idx,baseResamples = base_resamples_0bin,seeds=session_seeds,variant_name="FA_0bin",base_allRel = df_0bin_base$name)-> bs_0bin_reldf
+```
+
+```{r}
+
+bs_0bin_reldf$name[ (bs_0bin_reldf$BS_rel1D==30) | (bs_0bin_reldf$BS_rel2D==30) ] -> bs_confirmed_0bin
+summary_df$name[ (summary_df$BS_rel1D==30) | (summary_df$BS_rel2D==30) ] -> bs_confirmed_MEDbin
+
+length(bs_confirmed_0bin)
+length(bs_confirmed_MEDbin)
+
+length(intersect(bs_confirmed_0bin,bs_confirmed_MEDbin))
+
+sum(bs_confirmed_0bin%in% bs_confirmed_MEDbin)
+
+```
 
 
 ### MDFS 3D test
