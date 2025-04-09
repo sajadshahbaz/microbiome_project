@@ -1248,37 +1248,65 @@ sum(bs_confirmed_0bin%in% bs_confirmed_MEDbin)
 ```
 
 
-### MDFS 3D test
+# MDFS 3D test
 
 Run on median dataset, done on HPC cluster using `mdfs_3d_test.R` script.
 
 ```{r}
-readRDS("MDFS_3D_result.rds")-> MDFS_3D
-
-colnames(taxonomy.mean.final)[MDFS_3D$relevant.variables]-> taxa_3D
-
-setdiff(taxa_3D,any_times_relevant_taxa)-> taxa_3D_ONLY
+load("mean_data.RData")
+tb_mean0<-tb_meanMED<-taxonomy.mean.final
+for (i in 1:ncol(tb_mean)){ tb_meanMED[,i]= (tb_meanMED[,i]>median(tb_meanMED[,i]))*1.
+tb_mean0[,i]= (tb_mean0[,i]>0)*1.
+}
 ```
 
 ```{r}
+unique(tb_mean0|> unlist())
+```
 
-union(taxa_3D, base_relevant_set)-> all_relevant_123D
+```{r}
+if (!file.exists("MDFS_3D_discrete.RData")){
+set.seed(21312)
+  MDFS.discrete(data=tb_meanMED, decision = decision.mean.final, dimensions = 3, seed=21312)-> MDFS_3D_MEDbin
+set.seed(21312)
+  MDFS.discrete(data=tb_mean0, decision = decision.mean.final, dimensions = 3, seed=21312)-> MDFS_3D_0bin
+  save(MDFS_3D_MEDbin, MDFS_3D_0bin, file = "MDFS_3D_discrete.RData")
+} else {
+  load("MDFS_3D_discrete.RData")
+}
+```
+
+```{r}
+union(
+colnames(tb_mean0)[MDFS_3D_0bin$relevant.variables],
+colnames(tb_mean0)[MDFS_3D_MEDbin$relevant.variables])-> taxa_3D
+length(taxa_3D)
+union(summary_df$name, df_0bin_base$name)-> taxa_2D_and_partners_bothMethods
+taxa_3D[ !(taxa_3D %in% taxa_2D_and_partners_bothMethods) ]-> taxa_3D_only
+
+```
+
+
+```{r}
+
+union(taxa_3D, taxa_2D_and_partners_bothMethods)-> all_relevant_123D
 
 MDFS_3D$statistic-> stat_3D
 colnames(taxonomy.mean.final)->names(stat_3D)
 
-rel_1D_only<- names(rel_freq_1D)[(rel_freq_1D==30) & (rel_freq_2D<30)]
-rel_2D_only<- names(rel_freq_1D)[(rel_freq_2D==30)]
-rel_3D_only<- setdiff(all_relevant_123D, any_times_relevant_taxa)
+taxa_1D_only<- names(rel_freq_1D)[(rel_freq_1D==30) & (rel_freq_2D<30)]
+taxa_2D<- names(rel_freq_1D)[(rel_freq_2D==30)]
 
-plot_colors<- ifelse(all_relevant_123D %in% rel_1D_only, "red",
-                     ifelse(all_relevant_123D %in% rel_2D_only, "blue",
-                            ifelse(all_relevant_123D %in% rel_3D_only, "green", "gray")))
+plot_colors<- ifelse(all_relevant_123D %in% taxa_1D_only, "red",
+                     ifelse(all_relevant_123D %in% taxa_2D, "blue",
+                            ifelse(all_relevant_123D %in% taxa_3D_only, "green", "gray")))
 
 stat_3D[all_relevant_123D]-> stat_3D_plot
 order(-stat_3D_plot)->order_3D
 stat_3D_plot<-stat_3D_plot[order_3D]
 plot_colors<-plot_colors[order_3D]
+
+hist(stat_3D[taxa_3D_only])
 
 names(stat_3D_plot)<- lapply(names(stat_3D_plot), get_deepest_taxonomy_lvl) |> unlist()
 par(mar = c(8, 4, 4, 2))  # Adjust the margin on the bottom (first value)
