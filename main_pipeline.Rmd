@@ -233,6 +233,7 @@ library(matrixStats)
 host_id<- metadata$host.subject.id
 names(host_id)<- rownames(metadata)
 base_resamples<-list()
+save(y,tdata,host_id,file="clean_data_before_resampling.RData")
 if (!file.exists("base_resamples.rds")){
 for (i in 1:30){
   set.seed(i)
@@ -427,25 +428,49 @@ Then, for each relevant variable in 2D, we take its "definitive" partner as the 
 ```{r}
 #mean IG
 do.call(rbind, partners_per_run)-> partners_all_runs #all runs together
-aggregate(partners_all_runs$rel_IG, #value to aggregate
-          list(rel=partners_all_runs$rel_name,       #factors over which to group
-              partner=partners_all_runs$partner_name),
-          mean #how to aggregate
-          )-> partner_IG_tabulation
+#aggregate(partners_all_runs$rel_IG, #value to aggregate
+#          list(rel=partners_all_runs$rel_name,       #factors over which to group
+#              partner=partners_all_runs$partner_name),
+#          mean #how to aggregate
+#          )-> partner_IG_tabulation
+
+data.frame(rel= partners_all_runs$rel_name, 
+           partner=partners_all_runs$partner_name,
+       pair=interaction(partners_all_runs$rel_name, partners_all_runs$partner_name) |> as.character(),
+       IG=partners_all_runs$rel_IG)-> partner_IG_tabulation
 
 
-lapply(base_relevant_set[rel_freq_2D==30], function(taxon)
+
+
+do.call(rbind,lapply(base_relevant_set[rel_freq_2D==30], function(taxon)
 {
         taxon_subset<- partner_IG_tabulation$rel == taxon
         if (any(taxon_subset))
         {
+              #print(sum(taxon_subset))
                 taxon_partners<-partner_IG_tabulation[ taxon_subset, ,drop=FALSE]
-                taxon_partners$partner[[ which.max(taxon_partners$x) ]]
+                pairCounts<-table(taxon_partners$pair)
+                pairCounts<- pairCounts[ order(pairCounts, decreasing = TRUE) ]
+                partners_names_only<- partner_IG_tabulation[,-ncol(partner_IG_tabulation)]
+                partners_names_only<- partners_names_only[!duplicated(partners_names_only),]
+                partners_names_only$partner[ partners_names_only$pair == names(pairCounts)[[1]] ] -> most_freq
+                #print(sprintf("relevant taxon name= %s", get_deepest_taxonomy_lvl(taxon ) ))
+                #print (sprintf("frequency of %s =  %d ", get_deepest_taxonomy_lvl(most_freq),  pairCounts[[1]]))
+                result<- data.frame(rel=taxon,partner=most_freq, freq=pairCounts[[1]])
+                if (pairCounts[[1]]>15) { result<-result } else { result<- result}
+                  #result<- "tie" }
+                #taxon_partners$partner[[ which.max(taxon_partners$IG) ]]
+                 result
         } else NA
 
-}       ) %>% unlist() -> best_partners_baseRelSet
+}       )) -> rel2D_partner_freq_df
+  
+  best_partners_baseRelSet<-rel2D_partner_freq_df$partner
 
 names(best_partners_baseRelSet)<- base_relevant_set[rel_freq_2D==30]
+
+viz_rel2<- rel2D_partner_freq_df
+for (j in 1:2) viz_rel2[,j]<- sapply(viz_rel2[,j], get_deepest_taxonomy_lvl)
 
 ```
 
@@ -1225,6 +1250,16 @@ length(setdiff(relevant_in0bin, relevant_inMEDbin))
 
 ```
 
+```{r}
+rbind(
+df_0bin_base[df_0bin_base$name %in% setdiff(relevant_in0bin, relevant_inMEDbin),c("name","IG1D","IG2D")],
+summary_df[summary_df$name %in% setdiff(relevant_inMEDbin, relevant_in0bin),c("name","IG1D","IG2D") ])->temp
+rownames(temp)<-NULL
+temp$name<-sapply(temp$name, get_deepest_taxonomy_lvl)
+temp
+
+```
+
 ### bootstrap resampling
 
 ```{r}
@@ -1247,6 +1282,14 @@ sum(bs_confirmed_0bin%in% bs_confirmed_MEDbin)
 
 ```
 
+```{r}
+rbind(
+df_0bin_base[df_0bin_base$name %in% setdiff(bs_confirmed_0bin, bs_confirmed_MEDbin),c("name","IG1D","IG2D")],
+summary_df[summary_df$name %in% setdiff(bs_confirmed_MEDbin, bs_confirmed_0bin),c("name","IG1D","IG2D") ])->temp
+rownames(temp)<-NULL
+temp$name<-sapply(temp$name, get_deepest_taxonomy_lvl)
+temp
+```
 
 # MDFS 3D test
 
