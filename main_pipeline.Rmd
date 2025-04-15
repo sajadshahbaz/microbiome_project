@@ -782,9 +782,9 @@ viz_ig_df$name[[ which(
 viz_ig_df$name=="s__gamma_proteobacterium_symbiont_of_Gonopsis_affinis"
 )
 ]]="s_gp_symb_Gon_aff"
-viz_ig_df$partner_name[[ which(
-  viz_ig_df$partner_name=="s__Mediterranea_massiliensis")
-]]="s_Med_massiliensis"
+#viz_ig_df$partner_name[[ which(
+#  viz_ig_df$partner_name=="s__Mediterranea_massiliensis")
+#]]="s_Med_massiliensis"
 ```
 ## Browse end result
 
@@ -1226,7 +1226,7 @@ plot(unname(colSums(tdata[,common_taxa]>0)/nrow(tdata)) |> sort(),
 
 ```{r}
 source("MDFS_analysis_pipeline.R")
-
+#TO DO: change synergistic partners to most frequent ones
 base_MDFS_end2end(baseResamples = base_resamples_0bin, variant_name = "FA_0bin")-> df_0bin_base
 
 ```
@@ -1293,19 +1293,125 @@ temp
 
 # MDFS 3D test
 
-Run on median dataset, done on HPC cluster using `mdfs_3d_test.R` script.
+To initial 30 base resamples of either discretization method (0 or median based) we added 90 new ones, giving 120 base resamples in total.
+
+MDFS in 3 dimensions was run on all of those sets
 
 ```{r}
-load("mean_data.RData")
-tb_mean0<-tb_meanMED<-taxonomy.mean.final
-for (i in 1:ncol(tb_mean)){ tb_meanMED[,i]= (tb_meanMED[,i]>median(tb_meanMED[,i]))*1.
-tb_mean0[,i]= (tb_mean0[,i]>0)*1.
+base_resamples_extended<-readRDS("extended_base_resamples.rds")
+base_resamples_0binextended<-readRDS("extended_base_resamples_0bin.rds")
+```
+
+```{r}
+
+lapply(seq_along(base_resamples_extended), function(i)
+{
+  x<-readRDS(sprintf("MDFS_results/MDFS_3D_i=%d.rds",i))
+  x$med[c("statistic","p.value","adjusted.p.value","relevant.variables")]
+}
+  )->MDFS_3D_med
+```
+
+```{r}
+
+lapply(seq_along(base_resamples_extended), function(i)
+{
+  x<-readRDS(sprintf("MDFS_results/MDFS_3D_i=%d.rds",i))
+  x$zero[c("statistic","p.value","adjusted.p.value","relevant.variables")]
+}
+  )->MDFS_3D_zero
+```
+
+```{r}
+get_rel_taxa_names<-function(base_resampled_set, MDFS_result){
+  
+  colnames(base_resampled_set$taxa_binary)[ MDFS_result$relevant.variables ]
+  
+}
+
+
+```
+```{r}
+
+mapply(get_rel_taxa_names, base_resamples_extended, MDFS_3D_med )-> rel_taxa_3D_med
+mapply(get_rel_taxa_names, base_resamples_0binextended, MDFS_3D_zero )-> rel_taxa_3D_zero
+
+```
+
+```{r}
+selection_frequency<- function(names_list){
+  all_names<- Reduce(union, names_list)
+  counts<-Reduce("+",lapply(names_list, function(x) all_names %in% x ))
+  names(counts)<- all_names
+  counts
 }
 ```
 
 ```{r}
-unique(tb_mean0|> unlist())
+
+freq_3D_med<- selection_frequency(rel_taxa_3D_med)
+freq_3D_zero<- selection_frequency(rel_taxa_3D_zero)
+
 ```
+### Are there any taxa found consistently relevant in lower dimension, but not relevant in 3D??
+
+Yes, but their statistics are on the lower side, which means that they are not declared as relevant due to stricter criterion on the k-relevance that has  to be satisfied for 3-tuples.
+
+```{r}
+union(df_0bin_base$name[!df_0bin_base$partner_only],
+  summary_df$name[!summary_df$partner_only] ) -> base_confirmed_12Drel
+    
+print(sprintf("%d out of %d relevant taxa found in lower dimension appear in any run of 3D",
+              sum(base_confirmed_12Drel %in% union(names(freq_3D_med),names(freq_3D_zero))),
+              length(base_confirmed_12Drel)
+))
+
+base_confirmed_12Drel[!(base_confirmed_12Drel %in% 
+                          union(names(freq_3D_med),names(freq_3D_zero)))]-> not_found_in_3D
+print("2D IGs of remaining ones are:")
+summary_df$IG2D[summary_df$name %in% not_found_in_3D]
+
+```
+
+
+### 3D relevance frequency plots:
+
+```{r}
+
+barplot(sort(unname(freq_3D_med)), main="median based relevance frequencies")
+barplot(sort(unname(freq_3D_zero)), main="zero based relevance frequencies")
+```
+
+### Are there any taxa all times 3D relevant, but not all times relevant in lower dimension?
+
+```{r}
+union(df_0bin_base$name[!df_0bin_base$partner_only],
+  summary_df$name[!summary_df$partner_only] ) -> base_confirmed_12Drel
+    
+print(sprintf("%d out of %d relevant taxa found in 3D appear in 2D or 1D",
+              sum( union(names(freq_3D_med)[freq_3D_med==120],
+                        names(freq_3D_zero)[freq_3D_zero==120])  %in% base_confirmed_12Drel),
+              length(union(names(freq_3D_med)[freq_3D_med==120],
+                        names(freq_3D_zero)[freq_3D_zero==120]))
+))
+
+```
+
+### Synergistic triplets
+
+```{r}
+
+for (i in seq_along(base_resamples_extended[1:1])){
+    ComputeInterestingTuplesDiscrete(data = base_resamples_extended[[i]]$taxa_binary,
+                              decision = base_resamples_extended[[i]]$disease_status,
+                              dimensions = 3,
+                              interesting.vars = MDFS_3D_med[[i]]$relevant.variables
+                              )->y
+  
+}
+
+```
+
 
 ```{r}
 if (!file.exists("MDFS_3D_discrete.RData")){
