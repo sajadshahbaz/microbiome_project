@@ -309,25 +309,49 @@ summarize_MDFS_runs<-function(baseResamples,
 
 	}
 	do.call(rbind, partners_per_run)-> partners_all_runs #all runs together
-	aggregate(partners_all_runs$rel_IG, #value to aggregate
-		  list(rel=partners_all_runs$rel_name,       #factors over which to group
-		      partner=partners_all_runs$partner_name),
-		  mean #how to aggregate
-		  )-> partner_IG_tabulation
+
+do.call(rbind, partners_per_run)-> partners_all_runs #all runs together
+#aggregate(partners_all_runs$rel_IG, #value to aggregate
+#          list(rel=partners_all_runs$rel_name,       #factors over which to group
+#              partner=partners_all_runs$partner_name),
+#          mean #how to aggregate
+#          )-> partner_IG_tabulation
+
+data.frame(rel= partners_all_runs$rel_name, 
+           partner=partners_all_runs$partner_name,
+       pair=interaction(partners_all_runs$rel_name, partners_all_runs$partner_name) |> as.character(),
+       IG=partners_all_runs$rel_IG)-> partner_IG_tabulation
 
 
-	lapply(base_relevant_set[rel_freq_2D==30], function(taxon)
-	{
-		taxon_subset<- partner_IG_tabulation$rel == taxon
-		if (any(taxon_subset))
-		{
-			taxon_partners<-partner_IG_tabulation[ taxon_subset, ,drop=FALSE]
-			taxon_partners$partner[[ which.max(taxon_partners$x) ]]
-		} else NA
 
-	}       ) %>% unlist() -> best_partners_baseRelSet
 
-	names(best_partners_baseRelSet)<- base_relevant_set[rel_freq_2D==30]
+do.call(rbind,lapply(base_relevant_set[rel_freq_2D==30], function(taxon)
+{
+        taxon_subset<- partner_IG_tabulation$rel == taxon
+        if (any(taxon_subset))
+        {
+              #print(sum(taxon_subset))
+                taxon_partners<-partner_IG_tabulation[ taxon_subset, ,drop=FALSE]
+                pairCounts<-table(taxon_partners$pair)
+                pairCounts<- pairCounts[ order(pairCounts, decreasing = TRUE) ]
+                partners_names_only<- partner_IG_tabulation[,-ncol(partner_IG_tabulation)]
+                partners_names_only<- partners_names_only[!duplicated(partners_names_only),]
+                partners_names_only$partner[ partners_names_only$pair == names(pairCounts)[[1]] ] -> most_freq
+                #print(sprintf("relevant taxon name= %s", get_deepest_taxonomy_lvl(taxon ) ))
+                #print (sprintf("frequency of %s =  %d ", get_deepest_taxonomy_lvl(most_freq),  pairCounts[[1]]))
+                result<- data.frame(rel=taxon,partner=most_freq, freq=pairCounts[[1]])
+                if (pairCounts[[1]]>15) { result<-result } else { result<- result}
+                  #result<- "tie" }
+                #taxon_partners$partner[[ which.max(taxon_partners$IG) ]]
+                 result
+        } else NA
+
+}       )) -> rel2D_partner_freq_df
+  
+  best_partners_baseRelSet<-rel2D_partner_freq_df$partner
+
+names(best_partners_baseRelSet)<- base_relevant_set[rel_freq_2D==30]
+
 	union(base_relevant_set, unname(best_partners_baseRelSet))-> overall_rel_list
 	  
 	#ugly, but necessary check:
