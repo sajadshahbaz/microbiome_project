@@ -320,6 +320,7 @@ mapply(function(data, dec, mdfs){
 
 ```
 
+#### Strongest 2D interactions
 
 ```{r}
 
@@ -351,6 +352,200 @@ for (cohort in names(taxa)){
                 ) )
   
 }
+
+```
+
+#### Interactions of 2D only taxa
+
+```{r}
+for (cohort in names(taxa)){
+  
+  partners[ grep(cohort,names(partners)) ]-> sublist
+  MDFS_2D_rel[ names(sublist)  ] -> rel_2D_sublist
+  MDFS_1D_rel[ names(sublist)  ] -> rel_1D_sublist
+  mapply(function(taxa_names1,taxa_names2) 
+          setdiff(taxa_names2, taxa_names1),rel_1D_sublist, rel_2D_sublist, SIMPLIFY = FALSE)-> only_2D_taxa
+  if (length(unlist(only_2D_taxa))){
+  df.2D<- do.call(rbind,mapply( function(df,name_subset, variant_name)
+            cbind(df[df$rel_name %in% name_subset,], variant=rep(variant_name, 
+                                                                 sum(df$rel_name %in% name_subset) )),
+             sublist,only_2D_taxa, names(sublist)
+             ,SIMPLIFY=FALSE))
+  rownames(df.2D)<-NULL
+  
+  df.2D$rel_IG_increase= sapply(1:nrow(df.2D), function(i)
+    MDFS_2D[[ df.2D$variant[[i]] ]]$statistic [ colnames(taxa_binary[[ df.2D$variant[[i]] ]])== df.2D$rel_name[[i]] ] - MDFS_1D[[ df.2D$variant[[i]] ]]$statistic [ colnames(taxa_binary[[ df.2D$variant[[i]] ]])== df.2D$rel_name[[i]] ])
+for (i in 1:nrow(df.2D)){
+    taxa_binary[[ df.2D$variant[[i]] ]]-> tb
+    tab<-table(tb[, df.2D$rel_name[[i]] ],  tb[, df.2D$partner_name[[i]] ], decision[[cohort]])
+    print(df.2D$variant[[i]] )
+    print(table(decision[[cohort]]))
+    print(sprintf("rel_taxa: %s, partner: %s", df.2D$rel_name[[i]], df.2D$partner_name[[i]]))
+    print((tab[,,1]/sum(tab[,,1]) )|> round(2))
+   print((tab[,,2]/sum(tab[,,2]) )|> round(2))
+    print(sprintf("IG increase of rel_taxa=%.3f, min IG1D=%.3f", 
+              df.2D$rel_IG_increase[[i]],
+              min(MDFS_1D[[ df.2D$variant[[i]] ]]$statistic[ MDFS_1D[[ df.2D$variant[[i]] ]]$relevant.variables  ]  )
+             ) )
+}
+  } else { print(sprintf("no only 2D taxa found for %s", cohort ))}
+  
+}
+
+```
+
+### Test RF run
+
+```{r}
+
+library(pROC)
+library(randomForest)
+set.seed(234)
+for (cohort in names(decision)){
+  randomForest(x = taxa[[cohort]][, MDFS_1D_rel[[cohort]]  ], y = as.factor(decision[[cohort]]),
+               importance = TRUE)-> RF_1D
+  randomForest(x = taxa[[cohort]][, union(MDFS_2D_rel[[cohort]],
+                                          MDFS_1D_rel[[cohort]]) ], 
+               y = as.factor(decision[[cohort]]),
+               importance = TRUE)-> RF_2D
+   randomForest(x = taxa[[cohort]][, U_test[[cohort]]$rel_set  ], y = as.factor(decision[[cohort]]),
+               importance = TRUE)-> RF_U
+  AUC_1D<- auc( response= decision[[cohort]],
+                 predictor= RF_1D$votes[,2], quiet=TRUE )
+  AUC_2D<- auc( response= decision[[cohort]],
+                 predictor= RF_2D$votes[,2], quiet=TRUE )
+  AUC_U<- auc( response= decision[[cohort]],
+               predictor= RF_U$votes[,2], quiet=TRUE )
+  print(cohort)
+  print("OOB AUC: U_test, MDFS_1D, MDFS_1 or 2D")
+  print(AUC_U)
+  print(AUC_1D)
+  print(AUC_2D)
+
+}
+
+```
+#### Bootstrap resampling validation
+
+```{r}
+
+set.seed(234)
+
+lapply(taxa, function(taxa_cohort)
+          sample(1:nrow(taxa_cohort), nrow(taxa_cohort),replace=TRUE )
+  )-> B_idx
+
+```
+
+```{r}
+
+MDFS_FS<- function(X, y, mc=30){
+   attributes(y)<-NULL
+   binarize_taxa(X,binarize_on_median = TRUE)|> filter_sparse_cols(thr=mc) -> Xm
+   
+   binarize_taxa(X,binarize_on_median = FALSE)|> filter_sparse_cols(thr=mc) -> X0
+   to_keep<- c("statistic","p.value","adjusted.p.value","relevant.variables")
+   MDFS.discrete(data=Xm,decision = y,dimensions = 1,
+                      p.adjust.method = "holm",level=0.05,seed=123)[to_keep]-> res_1Dm
+   MDFS.discrete(data=Xm,decision = y,dimensions = 2,
+                      p.adjust.method = "holm",level=0.05,seed=123)[to_keep]-> res_2Dm
+   MDFS.discrete(data=X0,decision = y,dimensions = 1,
+                      p.adjust.method = "holm",level=0.05,seed=123)[to_keep]-> res_1D0
+   MDFS.discrete(data=X0,decision = y,dimensions = 2,
+                      p.adjust.method = "holm",level=0.05,seed=123)[to_keep]-> res_2D0
+  
+   res_1Dm$rel_set= colnames(Xm)[res_1Dm$relevant.variables]
+   res_2Dm$rel_set= colnames(Xm)[res_2Dm$relevant.variables]
+   res_1D0$rel_set= colnames(X0)[res_1D0$relevant.variables]
+   res_2D0$rel_set= colnames(X0)[res_2D0$relevant.variables]
+   
+   RESULT<-list(
+     res_1Dm=res_1Dm,
+     res_2Dm=res_2Dm,
+     res_1D0=res_1D0,
+     res_2D0=res_2D0
+   )
+   
+}
+
+```
+
+
+```{r}
+res_mdfs_base<-list()
+res_u_base<-list()
+for (cohort in names(taxa)){
+  MDFS_FS(taxa[[cohort]], y = decision[[cohort]], mc = 30)-> res_mdfs_base[[cohort]]
+    U_test_FS(data=taxa[[cohort]], decision = decision[[cohort]])-> res_u_base[[cohort]]
+  }
+
+```
+
+
+
+```{r}
+ntry=20
+mdfs<-list()
+ut<-list()
+for (j in 1:ntry){
+
+lapply(taxa, function(taxa_cohort)
+          sample(1:nrow(taxa_cohort), nrow(taxa_cohort),replace=TRUE )
+  )-> B_idx
+
+  for (cohort in names(taxa)){
+  MDFS_FS(taxa[[cohort]][B_idx[[cohort]], ], y = decision[[cohort]][B_idx[[cohort]] ], mc = 30)-> res_mdfs
+    U_test_FS(data=taxa[[cohort]][B_idx[[cohort]], ], decision = decision[[cohort]][B_idx[[cohort]] ])-> res_u
+    mdfs[[cohort]][[j]]<-res_mdfs
+  ut[[cohort]][[j]]<-res_u
+  }
+  
+  
+
+message(j)
+
+}
+
+```
+
+```{r, fig.width=7,fig.height=7}
+par(mfrow=c(2,2))
+lapply(names(res_mdfs_base), function(coh){
+  
+  res_mdfs_base[[coh]]-> mdfs_res
+  res_u_base[[coh]]-> u_res
+  lapply(names(mdfs_res), function(mdv){
+    
+    print(sprintf("%s, mdfs: %s, original data n_rel=%d",coh,
+                  substr(mdv,5,8), length(mdfs_res[[mdv]]$rel_set)  ))
+    length(mdfs_res[[mdv]]$rel_set)-> n_orig
+    print("n_rel variability on bootstrap resampled data: ")
+    sapply(mdfs[[coh]], function(x) x[[mdv]]$rel_set |> length())-> n_bs
+    print(summary(n_bs))
+    list(variant= substr(mdv,5,8),
+         n_orig=n_orig,
+         n_bs=n_bs
+         )
+  })-> results_varaiants_mdfs
+  u_t_Results<- list(variant="u_test",
+  n_orig=u_res$rel_set |> length(),
+  n_bs= sapply(ut[[coh]], function(x) x$rel_set |> length()  ) )
+  fs_list<-c( list(u_t_Results), results_varaiants_mdfs)
+  do.call( cbind,
+    #c(list(u_t_Results$n_bs),
+    #lapply(results_varaiants_mdfs, 
+    #       function(x) x$n_bs
+    #       ))
+    lapply(fs_list, function(x) x$n_bs )
+    )-> n_bs_method
+  colnames(n_bs_method)<- sapply(fs_list, function(x) x$variant)
+  boxplot(n_bs_method,main=coh, ylim=c(-20,130))
+  points( 1:5, sapply(fs_list, function(x) x$n_orig ), pch=4, cex=3, col="red" )
+  text(1:5, sapply(fs_list, function(x) x$n_orig )-15, labels=sapply(fs_list, function(x) x$n_orig),
+                                                                    col='red' )
+  invisible()
+  
+})
 
 ```
 
