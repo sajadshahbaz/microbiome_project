@@ -425,17 +425,7 @@ for (cohort in names(decision)){
 }
 
 ```
-#### Bootstrap resampling validation
-
-```{r}
-
-set.seed(234)
-
-lapply(taxa, function(taxa_cohort)
-          sample(1:nrow(taxa_cohort), nrow(taxa_cohort),replace=TRUE )
-  )-> B_idx
-
-```
+#### Subsampling validation
 
 ```{r}
 
@@ -481,32 +471,183 @@ for (cohort in names(taxa)){
 
 ```
 
+##### Random forest and feature selection in repeated resampling
 
+We take random fraction of $1- \frac{1}{e} \approx 0.63$ of total number of the samples and perform feature selection using MDFS and U-test, then we use those features to train random forest classifiers (this corresponds to a jackknife estimation).
+
+Held out data from each run is then used for testing performance of the classififier:
+- area under ROC curve (AUC),
+- diagnostic odds ratio (OR)
+
+...are computed on each trial and the distribution and spread of each statistic is reported.
+
+First, do the heavy lifting : model training and feature selection, save intermediate results for later:
 
 ```{r}
-ntry=20
+ntry=30
 mdfs<-list()
 ut<-list()
+RF<-list()
+FS<-list()
+resample_IDX<-list()
+subsampleSize=(1-1/exp(1))
+subsampleSize=0.9
+for (cohort in names(taxa))
+  FS[[cohort]]<-mdfs[[cohort]]<-ut[[cohort]]<-list()
 for (j in 1:ntry){
-
-lapply(taxa, function(taxa_cohort)
-          sample(1:nrow(taxa_cohort), nrow(taxa_cohort),replace=TRUE )
+  set.seed(j)
+  lapply(decision, function(taxa_cohort){
+    y1idx<- which(taxa_cohort==1 )
+    y0idx<- which(taxa_cohort==0 )
+    c(sample(y1idx, subsampleSize*length(y1idx),replace=FALSE),
+      sample(y0idx, subsampleSize*length(y0idx),replace=FALSE))
+  }
   )-> B_idx
-
+  resample_IDX[[j]]=B_idx
+  RF_coh<-list()
   for (cohort in names(taxa)){
-  MDFS_FS(taxa[[cohort]][B_idx[[cohort]], ], y = decision[[cohort]][B_idx[[cohort]] ], mc = 30)-> res_mdfs
+    MDFS_FS(taxa[[cohort]][B_idx[[cohort]], ], y = decision[[cohort]][B_idx[[cohort]] ], mc = 30)-> res_mdfs
     U_test_FS(data=taxa[[cohort]][B_idx[[cohort]], ], decision = decision[[cohort]][B_idx[[cohort]] ])-> res_u
     mdfs[[cohort]][[j]]<-res_mdfs
-  ut[[cohort]][[j]]<-res_u
+    ut[[cohort]][[j]]<-res_u
+    FS[[cohort]][[j]]<- list()
+    for (mdv in names(res_mdfs)) FS[[cohort]][[j]][[mdv]]= res_mdfs[[mdv]]$rel_set
+    FS[[cohort]][[j]][["u_test"]]= res_u$rel_set
+    RF_models_file=sprintf("RF_models/%s_rep_%d_RF.rds",cohort,j)
+    if (!file.exists(RF_models_file)) {
+      set.seed(j)
+      message("computing RF...")
+      RF_models= list()
+      for (mdv in names(res_mdfs)){
+        if (length(res_mdfs[[mdv]]$relevant.variables))
+          RF_models[[mdv]]= randomForest(x=taxa[[cohort]][B_idx[[cohort]], FS[[cohort]][[j]][[mdv]] ,drop=FALSE  ],
+                                         y=as.factor( decision[[cohort]][B_idx[[cohort]] ])
+          )
+        message(mdv); gc()
+      }
+      if (length(res_u$relevant.variables))
+        RF_models[["u_test"]]=randomForest(x=taxa[[cohort]][B_idx[[cohort]], res_u$rel_set,drop=FALSE  ],
+                                           y=as.factor(decision[[cohort]][B_idx[[cohort]] ])
+        )
+      saveRDS(RF_models,RF_models_file); gc()
+    } else {
+      RF_models<-readRDS(RF_models_file)
+    }
+    RF_coh[[cohort]]<- RF_models
   }
+  RF[[j]]=RF_coh
+  message(j)
   
-  
-
-message(j)
-
 }
 
 ```
+
+
+Compute said statistics based on saved results:
+
+```{r}
+source("balanced_decision.R")
+COHORTS= names(taxa)
+temp<-lapply(RF[[1]], names)
+METHODS=temp[[which.max(sapply(temp,length)) ]] 
+METRICS=c("AUC","OR")
+odds_ratio<- function(y_pred, y, method, cohort){
+  if(length(unique(y_pred))<2){
+    #print(sprintf("bad table %s %s",method, cohort));
+    return(1)}
+  stopifnot(length(unique(y))==2)
+  table(Predicted=y_pred,Actual=y)+0.5-> CM
+  (CM[2,2]*CM[1,1])/(CM[1,2]*CM[2,1])
+}
+performance=array(dim = c(length(COHORTS), length(METHODS),length(METRICS), length(RF)),
+                  dimnames = list(COHORTS,
+                                  METHODS,
+                                  METRICS,
+                                  NULL
+                                  )
+                  )
+for (coh in COHORTS){
+for (j in seq_along(RF)){
+  for (method in METHODS){
+  RF[[j]][[coh]][[method]]-> RF_mcj
+    if (is.null(RF_mcj)){ 
+      
+      print(sprintf("null %s %s",coh,method))
+      performance[coh,method,"AUC",j]=0.5
+      performance[coh,method,"OR",j]=1
+    } else {
+   # print(sprintf("%d %s %s ok",j,method,coh) )
+    test_pred= predict(RF_mcj, newdata=  taxa[[coh]][ -resample_IDX[[j]][[coh]],
+                                                 FS[[coh]][[j]][[method]] ],type="prob"  )[,2]
+    train_pred= predict(RF_mcj, newdata=  taxa[[coh]][ resample_IDX[[j]][[coh]],
+                                                  FS[[coh]][[j]][[method]]  ],type="prob"  )[,2]
+    y_thr= balanced.decision(x = train_pred, y= decision[[coh]][ resample_IDX[[j]][[coh]] ])$threshold
+    y_pbin<- (test_pred >= y_thr)
+    confusion=table(Predicted=y_pbin,Actual=decision[[coh]][-resample_IDX[[j]][[coh]] ])
+    performance[coh,method,"AUC",j]= auc(response=decision[[coh]][-resample_IDX[[j]][[coh]] ],
+                                        predictor=test_pred,quiet=TRUE)|> as.numeric() 
+    performance[coh,method,"OR",j]=  odds_ratio(y_pbin, decision[[coh]][-resample_IDX[[j]][[coh]] ],
+                                                method, coh)
+    
+    }
+  }
+  
+}
+}
+
+```
+
+
+```{r, fig.width = 5, fig.height = 6}
+par(mar = c(5, 13, 4, 1)) 
+#par(mfrow=c(1,2))
+do.call(rbind, lapply(names(decision),
+                      function(nm) { tab<-performance[nm,,"AUC",]
+                      rownames(tab)<-gsub("res_", "", rownames(tab))
+                                      rownames(tab)<-paste0(nm,"_",rownames(tab)); tab}
+                      ) )-> AUC_all
+do.call(rbind, lapply(names(decision),
+                      function(nm) {tab<-performance[nm,,"OR",]
+                      rownames(tab)<-gsub("res_", "", rownames(tab))
+                        rownames(tab)<-paste0(nm,"_",rownames(tab)); tab}
+                      ) )-> OR_all
+
+boxplot(t(AUC_all),las=2, horizontal=TRUE, main="classifier OOB AUC")
+temp<-t(OR_all)
+rownames(temp)<-NULL
+boxplot(temp[,1:10],las=2, horizontal=TRUE, main="classifier OOB OR")
+boxplot(temp[,11:15],las=2, horizontal=TRUE, main="classifier OOB OR")
+```
+
+
+##### Consensus feature set
+
+```{r}
+
+consensus_features<-list()
+for (cohort in COHORTS){
+  consensus_features[[cohort]]<-list()
+  for (method in METHODS){
+  consensus_features[[cohort]][[method]]= FS[[cohort]][[1]][[method]]
+  for (j in 2:ntry)
+    consensus_features[[cohort]][[method]]= intersect(consensus_features[[cohort]][[method]],
+                                                      FS[[cohort]][[j]][[method]])
+  }
+}
+```
+
+```{r}
+
+for (cohort in names(consensus_features)){
+  names(consensus_features[[cohort]])->fs_names
+  grep("D",fs_names)->mdfs_mask
+  consensus_features[[cohort]][["any_mdfs"]]= Reduce(union,consensus_features[[cohort]][mdfs_mask] )
+  print(cohort)
+  print(intersection_matrix(consensus_features[[cohort]]))
+}
+
+```
+
 
 ```{r, fig.width=7,fig.height=7}
 par(mfrow=c(2,2))
@@ -928,6 +1069,7 @@ viz_rel2<- rel2D_partner_freq_df
 for (j in 1:2) viz_rel2[,j]<- sapply(viz_rel2[,j], get_deepest_taxonomy_lvl)
 
 ```
+
 
 
 #### Use mean IG to estabilish true synergies
