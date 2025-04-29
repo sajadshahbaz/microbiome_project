@@ -642,9 +642,56 @@ for (cohort in names(consensus_features)){
   names(consensus_features[[cohort]])->fs_names
   grep("D",fs_names)->mdfs_mask
   consensus_features[[cohort]][["any_mdfs"]]= Reduce(union,consensus_features[[cohort]][mdfs_mask] )
+  grep("2D",fs_names)->twoD_mask
+  grep("1D",fs_names)->oneD_mask
+  Reduce(union, consensus_features[[cohort]][oneD_mask])-> set_1D
+  Reduce(union, consensus_features[[cohort]][twoD_mask])-> set_2D
+  consensus_features[[cohort]][["only_2D"]]=setdiff(set_2D,set_1D)
   print(cohort)
-  print(intersection_matrix(consensus_features[[cohort]]))
+  print(intersection_matrix(consensus_features[[cohort]][1:5] ))
+  print(intersection_matrix(consensus_features[[cohort]][5:7] ))
 }
+
+```
+
+##### Nogueira et al. (2018) FS stability:
+
+```{r}
+
+selection_indicator_matrix<-function(selection_list, all_features){
+  
+  Z<- matrix(nrow=length(selection_list),ncol=length(all_features))
+  for (i in seq_along(selection_list))
+    Z[i,]= all_features %in% selection_list[[i]]
+  Z
+}
+
+nogueira_stability<- function(selection_list, all_features){
+  Z<- selection_indicator_matrix(selection_list = selection_list,all_features = all_features)
+  p_f<- colMeans(Z)
+  mean(rowSums(Z))->k_
+  d=ncol(Z)
+  M=nrow(Z)
+  s2_f=(M/(M-1))*p_f*(1-p_f)
+  p_=k_/d
+  1- ( mean(s2_f)/(p_*(1 -p_ )) )
+}
+
+
+stability<-matrix(nrow=length(COHORTS), ncol=length(METHODS))
+rownames(stability)<- COHORTS
+colnames(stability)<- METHODS
+for (cohort in COHORTS){
+for (method in METHODS){
+  print(sprintf("%s %s",cohort, method))
+ lapply(1:ntry, function(j) FS[[cohort]][[j]][[method]])-> FS_list_cm
+  stability[cohort,method]=nogueira_stability(selection_list = FS_list_cm,
+                     all_features= colnames(taxa[[cohort]]))
+}
+}
+  
+ stability
+ 
 
 ```
 
