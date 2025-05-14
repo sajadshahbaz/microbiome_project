@@ -48,7 +48,7 @@ lapply(cohort_ids, function(id){
 
 Healthy vs rest.
 
-Decision vectors are stored in a list `decision`, `decision$cohor_name` gives the vector for the corresponding cohort.
+Decision vectors are stored in a list `decision`, `decision$cohort_name` gives the vector for the corresponding cohort "`cohort_name`". 
 
 1 encodes the state of disease present, 0 - healthy.
 
@@ -78,7 +78,7 @@ names(decision)<-cohort_ids
 
 ### Taxa table preparation 
 
-Similarly, taxa abundancies are stored in list of data.frames, one row per sample. Row order is obviously matched with the ordering of the samples in the corresponding decision vector.
+Similarly, taxa abundances are stored in list of data.frames, one row per sample. Row order is obviously matched with the ordering of the samples in the corresponding decision vector.
 
 #### Remove cohorts with no fully matching ids between taxa abundance and metadata
 
@@ -94,11 +94,13 @@ taxa<-lapply(taxa, function(df)
 
 ```
 
+This left 3 cohorts available for further investigation.
+
 #### Alpha diversity analysis and normalization
 
-Normalize abundancies and use proportions to calculate 3 versions of alpha diversity indexes and plot them against the cumulative abundance in each sample. 
+Normalize abundances and use proportions to calculate 3 versions of alpha diversity indexes and plot them against the cumulative abundance in each sample. 
 
-At this stage of preprocessing, we do not see any evidence for clear relationship between diveristy value and the cumulative abundance, so we do not filter the data further in the "samples" dimension.
+
 
 ```{r}
 diversity_indices<- function(tdata, data_name){
@@ -130,6 +132,11 @@ lib_sizes<- rowSums(tdata)
  mapply(diversity_indices, taxa, names(taxa)) |> invisible()
 ```
 
+
+At this stage of preprocessing, we do not see any evidence for clear relationship between diversity value and the cumulative abundance, so we do not filter the data further in the "samples" dimension.
+
+Finally, we normalize by total sample abundance:
+
 ```{r}
 
 lapply(taxa, function(data) data/rowSums(data))-> taxa
@@ -139,6 +146,9 @@ lapply(taxa, function(data) data/rowSums(data))-> taxa
 
 #### Binarization
 
+Below plot shows number of non-zero entries in the abundance table per each column (taxon).
+These values are seen on Y axis, while each position on X axis corresponds to each taxon.
+Horizontal line is drawn at 30.
 
 ```{r}
 
@@ -150,12 +160,12 @@ mapply(function(data, name)
 
 
 ```
+As expected, majority of taxa are very sparse. For our purposes, we limit the analysis to those which have at least 30 non-zero entries.
 
 
-
-
+As for the binarization, we apply it separately per each variable (taxon). 
 We use two approaches: binarization based on median or zero. 
-In case of median, entries less than or equal to median normalized abundance for each taxon are zeroed out, while for "zero" strategy, zero entries get mapped to zeros an other to ones. 
+In case of median, entries of normalized abundance $\leq$ median for each taxon are zeroed out, while for "zero" strategy, zero entries get mapped to zeros an other to ones. 
 The only difference will be visible in case of common taxa, being present in more than half of the samples.
 
 ```{r}
@@ -164,7 +174,7 @@ library(matrixStats)
 binarize_taxa<- function(taxonomy, binarize_on_median=TRUE){
   taxonomy<- as.matrix(taxonomy)
 meds= if (binarize_on_median) colMedians(taxonomy) else rep(0,ncol(taxonomy))
-tb<- t( t(taxonomy)>meds )*1. #exploit recycling mechanism.
+tb<- t( t(taxonomy)>meds )*1. #exploits recycling mechanism of R:
 			      #column [[i]] of `taxonomy` gets binarized by meds[[i]]
 return(tb)}
 
@@ -203,6 +213,8 @@ source("resample_FS_procedure.R")
 ```
 
 
+#### U-test
+
 ```{r}
 mapply( function(X,y){
           U_test_FS(data=X,decision=y,lvl=0.05,p.adjust.method = "holm")},
@@ -210,6 +222,8 @@ mapply( function(X,y){
   )-> U_test
 
 ```
+
+#### MDFS
 
 We apply MDFS on two types of binary data, and select final relevant set as union of those two approaches
 
@@ -230,12 +244,17 @@ mapply( function(X,y){attributes(y)<-NULL
 
 ```{r}
 
+## convert raw MDFS result to taxa names
+
 mapply(function(X,mdfs)
       colnames(X)[mdfs$relevant.variables],taxa_binary,MDFS_1D,SIMPLIFY = FALSE
   )-> MDFS_1D_rel
 mapply(function(X,mdfs)
       colnames(X)[mdfs$relevant.variables],taxa_binary,MDFS_2D,SIMPLIFY = FALSE
   )-> MDFS_2D_rel
+
+## for each cohort, select results from both binarization methods and save them
+## as a separate entry of the list
 
 for (nm in names(taxa))
 {
@@ -249,6 +268,8 @@ for (nm in names(taxa))
 #### Compare U-test and MDFS on each of the cohorts:
 
 ```{r}
+
+## intersection_matrix[i,j]= number of taxa found in both sets_list[[i]] and sets_list[[j]]
 
 intersection_matrix<- function(sets_list){
   
@@ -282,6 +303,12 @@ for (nm in names(U_test)){
 ### Inspect synergistic interactions obtained from 2D analysis
 
 ```{r}
+
+## Given input dataset and a vector of indexes of interesting taxons,
+## function returns a data.frame, one row per one interesting taxon,
+## that contains ID of other taxa that increases the information on decision gained from
+## adding other taxa to the interesting taxon the most.
+
 get_interaction_partner<- function(dataset, decision, interesting.vars, ...){
 attributes(decision)<-NULL
 if (!(all(interesting.vars %in% 1:ncol(dataset))))
@@ -312,6 +339,8 @@ do.call(rbind,
 
 ```{r}
 
+### apply the function to each dataset:
+
 mapply(function(data, dec, mdfs){
         get_interaction_partner(dataset=data, decision = dec, 
                                 interesting.vars = mdfs$relevant.variables)-> res
@@ -321,6 +350,9 @@ mapply(function(data, dec, mdfs){
 ```
 
 #### Strongest 2D interactions
+
+Here, we inspect taxa with highest IG in 2D analysis. For the case of these datasets, all of them were found relevant in 1D analysis, meaning that the true synergistic effect here is unlikely.
+As a reference, we compare increase of IG as we go from 1D to 2D analysis with minimum IG obtained in 1D and none of the taxa found by picking the highest IG 2D pass such a filter:
 
 ```{r}
 
@@ -356,6 +388,8 @@ for (cohort in names(taxa)){
 ```
 
 #### Interactions of 2D only taxa
+
+In contrast, there are few taxons that were found relevant only in 2D analysis and applying the same criterion on deciding wether the observed interaction is truly synergistic or not, all of them pass the test (the increase of IG from 1D and 2D surpasses the minimal IG in 1D).
 
 ```{r}
 for (cohort in names(taxa)){
@@ -396,6 +430,10 @@ for (i in 1:nrow(df.2D)){
 
 ### Test RF run
 
+We run Random Forest classifiers using the taxa abundance and equip them with variables found relevant by each of the feature selection methods tested.
+
+For MDFS, we consider a variable to be relevant here if it was found relevant by either of the methods.
+
 ```{r}
 
 library(pROC)
@@ -425,7 +463,21 @@ for (cohort in names(decision)){
 }
 
 ```
-#### Subsampling validation
+### Subsampling validation
+
+Here, we set up the procedure into one pipeline and to further validate our findings, we subject it to resampling procedure, repeating 30 times the following protocol:
+
+- leave random 10% of the samples out (keep it as Out Of Bag (OOB) data)
+
+- apply feature selection methods on the remaining 90% of the samples. For MDFS this also includes repeating binarization 'from scratch' on each trial.
+
+- for each feature set from previous step, train random forest classifiers on in-bag data using the features obtained from each method.
+
+- record the performance of the classifiers on OOB data.
+
+This resampling strategy is known in literature as `jackknife`.
+
+Below function streamlines MDFS analysis for one trial (accepting abundance as `X`, and decision vector as `y`, while `mc` determines mininum allowable number of samples in each binarized category of the taxon - taxa that have less than `mc` samples in any class after binarization are not used).
 
 ```{r}
 
@@ -461,6 +513,8 @@ MDFS_FS<- function(X, y, mc=30){
 ```
 
 
+Apply `U_test_FS` and `MDFS_FS` once for testing purposes.
+
 ```{r}
 res_mdfs_base<-list()
 res_u_base<-list()
@@ -473,9 +527,7 @@ for (cohort in names(taxa)){
 
 ##### Random forest and feature selection in repeated resampling
 
-We take random fraction of $1- \frac{1}{e} \approx 0.63$ of total number of the samples and perform feature selection using MDFS and U-test, then we use those features to train random forest classifiers (this corresponds to a jackknife estimation).
-
-Held out data from each run is then used for testing performance of the classififier:
+Held out data from each run is then used for testing performance of the classifier:
 - area under ROC curve (AUC),
 - diagnostic odds ratio (OR)
 
@@ -490,12 +542,12 @@ ut<-list()
 RF<-list()
 FS<-list()
 resample_IDX<-list()
-subsampleSize=(1-1/exp(1))
 subsampleSize=0.9
 for (cohort in names(taxa))
   FS[[cohort]]<-mdfs[[cohort]]<-ut[[cohort]]<-list()
 for (j in 1:ntry){
   set.seed(j)
+  # construct ntry resamples, save them as indexes of samples to keep from each cohort
   lapply(decision, function(taxa_cohort){
     y1idx<- which(taxa_cohort==1 )
     y0idx<- which(taxa_cohort==0 )
@@ -563,7 +615,7 @@ performance=array(dim = c(length(COHORTS), length(METHODS),length(METRICS), leng
                   dimnames = list(COHORTS,
                                   METHODS,
                                   METRICS,
-                                  NULL
+                                  NULL  #30 repeats
                                   )
                   )
 for (coh in COHORTS){
@@ -621,6 +673,9 @@ boxplot(temp[,11:15],las=2, horizontal=TRUE, main="classifier OOB OR")
 
 
 ##### Consensus feature set
+
+As a final, high confidence result, we keep features that were found relevant at each repeat of the resampling procedure.
+
 
 ```{r}
 
