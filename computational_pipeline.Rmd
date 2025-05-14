@@ -11,6 +11,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+
 # Initial data preparation
 
 Read the raw taxonomy abundance info and metadata from delimiter separated files.
@@ -604,11 +605,16 @@ temp<-lapply(RF[[1]], names)
 METHODS=temp[[which.max(sapply(temp,length)) ]] 
 METRICS=c("AUC","OR")
 odds_ratio<- function(y_pred, y, method, cohort){
-  if(length(unique(y_pred))<2){
+ # if(length(unique(y_pred))<2){
     #print(sprintf("bad table %s %s",method, cohort));
-    return(1)}
+  #  return(1)}
   stopifnot(length(unique(y))==2)
-  table(Predicted=y_pred,Actual=y)+0.5-> CM
+  CM= matrix(nrow=2,ncol=2)
+  CM[1,1]=sum( (y_pred==0) & (y==0))
+  CM[2,1]=sum( (y_pred==1) & (y==0))
+  CM[1,2]=sum( (y_pred==0) & (y==1))
+  CM[2,2]=sum( (y_pred==1) & (y==1))
+  if (any(CM==0)) CM= CM + 1
   (CM[2,2]*CM[1,1])/(CM[1,2]*CM[2,1])
 }
 performance=array(dim = c(length(COHORTS), length(METHODS),length(METRICS), length(RF)),
@@ -618,6 +624,14 @@ performance=array(dim = c(length(COHORTS), length(METHODS),length(METRICS), leng
                                   NULL  #30 repeats
                                   )
                   )
+
+pred_thr= array(NA, dim= c(length(COHORTS), length(METHODS), length(RF)),
+                 dimnames = list(COHORTS,
+                                  METHODS,
+                                  NULL  #30 repeats
+                                  )
+)
+
 for (coh in COHORTS){
 for (j in seq_along(RF)){
   for (method in METHODS){
@@ -631,9 +645,9 @@ for (j in seq_along(RF)){
    # print(sprintf("%d %s %s ok",j,method,coh) )
     test_pred= predict(RF_mcj, newdata=  taxa[[coh]][ -resample_IDX[[j]][[coh]],
                                                  FS[[coh]][[j]][[method]] ],type="prob"  )[,2]
-    train_pred= predict(RF_mcj, newdata=  taxa[[coh]][ resample_IDX[[j]][[coh]],
-                                                  FS[[coh]][[j]][[method]]  ],type="prob"  )[,2]
-    y_thr= balanced.decision(x = train_pred, y= decision[[coh]][ resample_IDX[[j]][[coh]] ])$threshold
+    y_thr= balanced.decision(x = RF_mcj$votes[,2], 
+                             y= decision[[coh]][ resample_IDX[[j]][[coh]] ])$threshold
+    pred_thr[coh,method,j]=y_thr
     y_pbin<- (test_pred >= y_thr)
     confusion=table(Predicted=y_pbin,Actual=decision[[coh]][-resample_IDX[[j]][[coh]] ])
     performance[coh,method,"AUC",j]= auc(response=decision[[coh]][-resample_IDX[[j]][[coh]] ],
@@ -667,9 +681,52 @@ do.call(rbind, lapply(names(decision),
 boxplot(t(AUC_all),las=2, horizontal=TRUE, main="classifier OOB AUC")
 temp<-t(OR_all)
 rownames(temp)<-NULL
-boxplot(temp[,1:10],las=2, horizontal=TRUE, main="classifier OOB OR")
+boxplot(temp[,1:5],las=2, horizontal=TRUE, main="classifier OOB OR",ylim=c(0,25))
+boxplot(temp[,6:10],las=2, horizontal=TRUE, main="classifier OOB OR",ylim=c(0,25))
 boxplot(temp[,11:15],las=2, horizontal=TRUE, main="classifier OOB OR")
 ```
+
+```{r}
+cbind(pred_thr["YachidaS_2019","res_1D0",], performance["YachidaS_2019","res_1D0","OR",])-> thr_OR
+
+ plot(thr_OR, xlab="thr", ylab="OR", main="RF performance on 1D0 feature set across 30 trials")
+```
+
+```{r}
+
+bad_trials<-(thr_OR[,1]<0.1)
+
+for ( i in which(bad_trials)){
+  X_train=taxa$YachidaS_2019[ resample_IDX[[i]]$YachidaS_2019, FS$YachidaS_2019[[i]]$res_1D0 ]
+   X_test=taxa$YachidaS_2019[ -resample_IDX[[i]]$YachidaS_2019, FS$YachidaS_2019[[i]]$res_1D0 ]
+   y_train=decision$YachidaS_2019[resample_IDX[[i]]$YachidaS_2019 ]
+   y_test= decision$YachidaS_2019[-resample_IDX[[i]]$YachidaS_2019 ]
+   rf_model_i<- RF[[i]]$YachidaS_2019$res_1D0
+   balanced.decision(x = predict(rf_model_i, newdata=X_train, type="prob")[,2],
+                     y= y_train)-> balanced_train_res
+   y_pred_test_prob= predict(rf_model_i, newdata= X_test,type="prob")[,2]
+   y_pred_test_dec= y_pred_test_prob >= balanced_train_res$threshold
+   print("_______________________")
+   print("_______________________")
+   print("balanced decision thr on train set:")
+   print(balanced_train_res$threshold)
+   print("confusion on test set using above thr:")
+   print(table(predicted=y_pred_test_dec, 
+               actual= y_test))
+   print(odds_ratio(y_pred_test_dec, 
+                    y_test))
+   y_pred_test_builtin= predict(rf_model_i, newdata= X_test)
+   print("results using builtin thr from RF: ")
+   print(table(predicted=y_pred_test_builtin, 
+               actual= y_test))
+   print(odds_ratio(y_pred_test_builtin, 
+                    y_test))
+   
+}
+
+```
+
+
 
 
 ##### Consensus feature set
