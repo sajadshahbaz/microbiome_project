@@ -350,18 +350,36 @@ for (j in 1:n_repeats){
                                                   features$md12D[[j]]))
           }
   model_file_string="RF_models/agp_j=%d_fs=%s_lop=%.2f.rds"
-  for (fs_method in names(features)){
+  for (fs_method in c(names(features),"md12DpInt" )){
     fname=sprintf(model_file_string,j,fs_method,lop)
     if (!file.exists(fname)){
         message(fname)
         set.seed(seeds[[j]])
       RF_fs_j=NA # set NA by default, immediately replaced by resulting model if
                  # fs_method found anything
-      if (length(features[[fs_method]][[j]])) {
-      RF_fs_j= randomForest(x=  tdata[ subsample[[j]]$keep, features[[fs_method]][[j]],
+      f_key<- if (fs_method=="md12DpInt") "md12Dp" else fs_method
+      if (length(features[[f_key]][[j]])) {
+      X_keep<-tdata[ subsample[[j]]$keep, ,
                                       drop=FALSE
-                                      ],
-                            y= y[   subsample[[j]]$keep ] |> as.factor() ) 
+                                      ]
+      X_keep_sel<- X_keep[, features[[f_key]][[j]], drop=FALSE]
+      X_rf<- X_keep_sel
+      if (fs_method=="md12DpInt")
+      {
+              #if any true synergies were found, interaction_data has length == 4
+              if (length(full_MDFSres[[j]]$res_2Dm$interaction_data)>1){
+                    interaction_xm<- generate_interaction_variables(X_keep, full_MDFSres[[j]]$res_2Dm$interaction_data)
+                    X_rf<- cbind(X_rf, interaction_xm)
+              } 
+                if (length(full_MDFSres[[j]]$res_2D0$interaction_data)>1) {
+                  interaction_x0<- generate_interaction_variables(X_keep, full_MDFSres[[j]]$res_2D0$interaction_data) 
+                  X_rf<- cbind(X_rf, interaction_x0)
+              } 
+      } 
+      
+      y_rf<-  y[   subsample[[j]]$keep ] |> as.factor() 
+      RF_fs_j= randomForest(x= X_rf,
+                            y= y_rf)
       }
       
       saveRDS(RF_fs_j, file=fname)                      
@@ -379,8 +397,9 @@ for (j in 1:n_repeats){
 
 ```{r}
 library(pROC)
+
 source("balanced_decision.R")
-METHODS=names(features)
+METHODS=c(names(features),"md12DpInt")
 METRICS=c("AUC","OR")
 odds_ratio<- function(y_pred, y){
  # if(length(unique(y_pred))<2){
@@ -395,6 +414,7 @@ odds_ratio<- function(y_pred, y){
   if (any(CM==0)) CM= CM + 1
   (CM[2,2]*CM[1,1])/(CM[1,2]*CM[2,1])
 }
+if (!file.exists("performance_agp.rds")) {
 performance=array(dim = c(length(METHODS),length(METRICS), n_repeats),
                   dimnames = list(
                                   METHODS,
@@ -420,10 +440,22 @@ for (j in 1:n_repeats){
       performance[method,"AUC",j]=0.5
       performance[method,"OR",j]=1
     } else {
-    test_pred= predict(RF_mj, newdata=  tdata[ subsample[[j]]$leave,
-                                                 features[[method]][[j]],
-                                                 drop=FALSE
-                                                 ],type="prob"  )[,2]
+    f_key= if (method %in% names(features)) method else "md12Dp"
+    X_test<- tdata[ subsample[[j]]$leave, ,drop=FALSE]
+    X_rf<- X_test[, features[[f_key]][[j]], drop=FALSE ]
+    if (method=="md12DpInt"){
+      if (length(full_MDFSres[[j]]$res_2Dm$interaction_data)>1){
+                    interaction_xm<- generate_interaction_variables(X_test, full_MDFSres[[j]]$res_2Dm$interaction_data)
+                    X_rf<- cbind(X_rf, interaction_xm)
+              } 
+      if (length(full_MDFSres[[j]]$res_2D0$interaction_data)>1){
+                    interaction_x0<- generate_interaction_variables(X_test, full_MDFSres[[j]]$res_2D0$interaction_data)
+                    X_rf<- cbind(X_rf, interaction_x0)
+      } 
+    X_rf_ref<-X_rf
+    }
+    test_pred= predict(RF_mj, newdata=  X_rf,
+                      type="prob"  )[,2]
     y_thr= balanced.decision(x = RF_mj$votes[,2], 
                              y= y[   subsample[[j]]$keep ] )$threshold
     pred_thr[method,j]=y_thr
@@ -435,15 +467,25 @@ for (j in 1:n_repeats){
     
     }
   }
-  
+  j_= j-1
+  if (j_==0) message(paste0(rep("_",n_repeats %/% 10),collapse=""))
+  if ((j_>0) && (j_ %% 10 == 0)) cat("#")
 }
+
+} else {
+  performance<-readRDS("performance_agp.rds")
+}
+
+```
+```{r}
+
+if (!file.exists("performance_agp.rds")) saveRDS(performance, "performance_agp.rds")
 
 
 ```
 
-
 ```{r}
-#install.packages("reshape2")
+install.packages("reshape2")
 library(reshape2)
 long_perf <- melt(performance, 
                   varnames = c("Method", "Metric", "Repeat"), value.name = "Value")
@@ -464,30 +506,7 @@ ggplot(long_perf, aes(x = Method, y = Value, fill = Method)) +
        y = "Value", x = "Feature Selection Method") +
   theme(legend.position = "none")
 ```
-```{r}
-only_highest_lvl<- function(t_names){
-  sapply(strsplit(t_names,"\\."),function(x) x[[length(x)]])
-  
-}
-all_12Dp<-Reduce(intersect,features$md12Dp) |> only_highest_lvl()
-all_12D<-Reduce(intersect,features$md12D) |> only_highest_lvl()
-all_1D<-Reduce(intersect,features$md1D) |> only_highest_lvl()
-all_u<-Reduce(intersect,features$u) |> only_highest_lvl()
 
-universe<-Reduce(union, list(all_12D,all_1D,all_12Dp,all_u))
-
-absence_presence<- matrix(nrow=4, ncol=length(universe))
-rownames(absence_presence)<-c("u","all_1D","all_12D","all_12Dp")
-colnames(absence_presence)<-universe
-all_times_rel<-list(u=all_u,all_1D=all_1D,all_12D=all_12D,all_12Dp=all_12Dp)
-for (met_name in names(all_times_rel)){
-  absence_presence[met_name,] = universe %in% all_times_rel[[met_name]]
-}
-
-t(1*absence_presence)
-
-
-```
 
 
 ```{r}
@@ -508,6 +527,267 @@ colnames(feature_absence_presence)<-universe
 frequent_<- list(over95= 475, over90=450)
 feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over95)] -> features_AP_filtered95
 feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over90)] -> features_AP_filtered90
+
+```
+
+```{r}
+viz_f90<- features_AP_filtered90
+colnames(viz_f90)<- sapply(strsplit(colnames(viz_f90),split="\\."), function(x) x[[length(x)]])
+viz_f90<-t(viz_f90) |> as.data.frame()
+viz_f90[ do.call(order, viz_f90),]
+```
+
+
+
+
+```{r}
+# mean IG = mean over all repeats
+# IG in repeat= max IG (median, zero)
+# partner in repeat= one with synergy
+#       if both zero and median are synergistic - arg max (IG)
+#overall partner - most frequent
+#only partners - overall partners but not in 1D or 2D relevant set 90% of times.
+plausible<- colnames(features_AP_filtered90)
+
+stopifnot(  #code below works if set of plausible taxons were all present in each of the
+            #subsamples (might dissapear due to filtering out of sparse columns)
+            #this condition catches this unlikely exception
+all(sapply(full_MDFSres, function(mdfs)
+              sapply(mdfs, function(x) 
+                  plausible %in% x$feature_names
+                )     
+))
+)
+rel_2D<-
+presence_mD<-presence_0D<-abundance_per_repD<-
+presence_mH<-presence_0H<-abundance_per_repH<-
+presence_m<-presence_0<-abundance_per_rep<-
+partners_per_rep<-
+IG1D<-IG2D<- matrix(nrow=n_repeats, ncol=length(plausible))
+
+for (j in c(1:n_repeats) ){
+  mdfs_j<- full_MDFSres[[j]]
+  for (k in seq_along(mdfs_j)) names(mdfs_j[[k]]$statistic)<- mdfs_j[[k]]$feature_names
+  
+  rel_2D[j,]= plausible %in% union(mdfs_j$res_2Dm$rel_set,
+                                   mdfs_j$res_2D0$rel_set
+                                   )
+  
+  plaus_IG1Dm<- mdfs_j$res_1Dm$statistic[plausible]
+  plaus_IG1D0<- mdfs_j$res_1D0$statistic[plausible]
+  plaus_IG2Dm<- mdfs_j$res_2Dm$statistic[plausible]
+  plaus_IG2D0<- mdfs_j$res_2D0$statistic[plausible]
+  IG1D[j,]<- pmax(plaus_IG1Dm,plaus_IG1D0)
+  mIG2D_bigger<- plaus_IG2Dm>plaus_IG2D0
+  IG2D[j,]<- pmax(plaus_IG2Dm,plaus_IG2D0)
+  
+  
+  partners_0<- mdfs_j$res_2D0$partner_df
+  partners_m<- mdfs_j$res_2Dm$partner_df
+  partners_0<- partners_0[partners_0$synergy,]  #only those which are truly synergistic
+  partners_m<- partners_m[partners_m$synergy,]
+  rownames(partners_0)<-partners_0$rel_name     #to make it possible to select by rows
+  rownames(partners_m)<-partners_m$rel_name     # see partner_j filling
+  has_partner<- plausible %in% union(partners_0$rel_name, partners_m$rel_name)
+  partner_j<- rep(NA, length(plausible))
+  #for each of the taxa that had a partner at j-th rep, 
+  #if median based IG was bigger, use partner from partners_m,otherwise from partners_0
+  partner_j[has_partner]<- ifelse(mIG2D_bigger[has_partner], 
+                                  partners_m[plausible[has_partner],]$partner_name,
+                                  partners_0[plausible[has_partner],]$partner_name
+                                  )
+  partners_per_rep[j,]=partner_j
+  
+  #mean abundance & presence
+  
+  plausible_ab_at_j<-tdata[ subsample[[j]]$keep, plausible ]
+  presence_m_at_j<-binarize_taxa(as.matrix(plausible_ab_at_j), 
+                thresholds = colMedians(as.matrix(plausible_ab_at_j)) )
+  presence_0_at_j<-binarize_taxa(as.matrix(plausible_ab_at_j), 
+                thresholds = rep(0, ncol(plausible_ab_at_j))) 
+  abundance_per_rep[j,]= colMeans(plausible_ab_at_j)
+  presence_0[j,]=  colMeans(presence_0_at_j)
+  presence_m[j,]=  colMeans(presence_m_at_j)
+  abundance_per_repH[j,]=colMeans(plausible_ab_at_j[y[subsample[[j]]$keep]==0, ])
+  abundance_per_repD[j,]=colMeans(plausible_ab_at_j[y[subsample[[j]]$keep]==1, ])
+  presence_0H[j,]=colMeans(presence_0_at_j[y[subsample[[j]]$keep]==0, ])
+  presence_0D[j,]=colMeans(presence_0_at_j[y[subsample[[j]]$keep]==1, ])
+  presence_mH[j,]=colMeans(presence_m_at_j[y[subsample[[j]]$keep]==0, ])
+  presence_mD[j,]=colMeans(presence_m_at_j[y[subsample[[j]]$keep]==1, ])
+  if ((j-1) %%100==0) message(sprintf("%d/%d",j,n_repeats))
+}
+
+
+
+
+```
+```{r}
+colnames(partners_per_rep)<- plausible
+
+
+```
+
+```{r}
+
+fs_df<- data.frame(taxon=plausible,
+                        IG2D= colMeans(IG2D),
+                        IG2D_SD= colSds(IG2D),
+                        IG1D= colMeans(IG1D),
+                        IG1D_SD=colSds(IG1D),
+                        rel_1D= features_AP_filtered90["md1D",],
+                        rel_2D= colSums(rel_2D),
+                        rel_u=  features_AP_filtered90["u",]
+                        )
+
+viz_fs_df<- fs_df
+rownames(viz_fs_df)<-NULL
+viz_fs_df$taxon<-sapply(strsplit(fs_df$taxon,"\\."), function(x) x[[length(x)]])
+viz_fs_df[,2:5]<- round(viz_fs_df[,2:5],2)
+viz_fs_df[order(-viz_fs_df$IG2D) , ]
+```
+
+```{r}
+pab_df<- data.frame(taxon=plausible,
+                        ab= colMeans(abundance_per_rep),
+                        ab_SD= colSds(abundance_per_rep),
+                        abH= colMeans(abundance_per_repH),
+                        abH_SD= colSds(abundance_per_repH),
+                        abD= colMeans(abundance_per_repD),
+                        abD_SD= colSds(abundance_per_repD),
+                        pr=colMeans(presence_0),
+                        pr_SD=colSds(presence_0),
+                        prH=colMeans(presence_0H),
+                        prH_SD=colSds(presence_0H),
+                        prD=colMeans(presence_0D),
+                        prD_SD=colSds(presence_0D)
+                        )
+
+viz_pab_df<- pab_df
+rownames(viz_pab_df)<-NULL
+viz_pab_df$taxon<-sapply(strsplit(pab_df$taxon,"\\."), function(x) x[[length(x)]])
+viz_pab_df[, grep("ab",colnames(viz_pab_df))]<-10000*viz_pab_df[, grep("ab",colnames(viz_pab_df))]
+viz_pab_df[,2:ncol(viz_pab_df)]<- round(viz_pab_df[,2:ncol(viz_pab_df)],2)
+viz_pab_df[order(-viz_fs_df$IG2D) , ]
+
+```
+
+```{r}
+library(knitr)
+bacteria_only_2D<-fs_df$taxon[(fs_df$rel_2D>450)&(fs_df$rel_1D<450)]
+
+partners_only2D<- sapply(bacteria_only_2D,
+                         function(taxon)
+                           names(table(partners_per_rep[,taxon]))[[which.max(table(taxon))]]
+                           )
+partners_only2D_freq<- sapply(bacteria_only_2D,
+                         function(taxon)
+                           table(partners_per_rep[,taxon])[[which.max(table(taxon))]] |> unname()
+                           )
+
+# for (i in seq_along(bacteria_only_2D)){
+#   
+#   print(sapply(strsplit(c(bacteria_only_2D[[i]],
+#           partners_only2D[[i]]),split="\\."
+#           ), function(x) x[[length(x)]]))
+#   print(sprintf("partnering frequency: %d", partners_only2D_freq[[i]] ))
+#   print(
+#   table(
+#         rel=(taxonomy.mean.final[,bacteria_only_2D[[i]]]>0)*1,
+#         partner=(taxonomy.mean.final[,partners_only2D[[i]]]>0)*1,
+#         y=decision.mean.final
+#         )
+#   )
+#   
+# }
+
+for (i in seq_along(bacteria_only_2D)) {
+  
+  # Extract readable names
+  bacteria_name <- tail(strsplit(bacteria_only_2D[[i]], "\\.")[[1]], 1)
+  partner_name <- tail(strsplit(partners_only2D[[i]], "\\.")[[1]], 1)
+  
+  # Print header
+  cat("\n\n---\n")
+  cat(sprintf("### Pair %d: %s vs %s\n", i, bacteria_name, partner_name))
+  
+  # Print frequency
+  cat(sprintf("**Partnering frequency**: %d\n\n", partners_only2D_freq[[i]]))
+  
+  # Compute binary presence matrix
+  rel <- as.integer(taxonomy.mean.final[, bacteria_only_2D[[i]]] > 0)
+  partner <- as.integer(taxonomy.mean.final[, partners_only2D[[i]]] > 0)
+ 
+  
+  # Tabulate
+  tab <- table(Rel = rel, Partner = partner, Class = decision.mean.final)
+  
+  print(cbind(tab[,,1], tab[,,2] ))
+  
+}
+```
+
+```{r}
+
+max(sapply(plausible,
+                         function(taxon)
+                           table(partners_per_rep[,taxon])[[which.max(table(taxon))]] |> unname()
+                           ))
+
+```
+
+
+
+```{r}
+par(mar = c(5, 3, 2, 1))
+rocs<-list()
+model_file_string<-"RF_models/agp_j=%d_fs=%s_lop=%.2f.rds"
+set.seed(3423)
+r<- sample(1:n_repeats,1)
+for (method in c("u","md1D","md12D","md12Dp")){
+
+colormap<- c(u="gray",
+             "md1D"="green",
+             "md12D"="blue",
+             "md12Dp"="pink"
+             )
+fname=sprintf(model_file_string,r,method,lop)
+RF_mr<- readRDS(fname)
+predict(RF_mr, newdata= tdata[ subsample[[r]]$leave, 
+                               features[[method]][[r]],
+                               drop=FALSE
+                               ], type="prob")[,2]->y_pred
+
+ROC<-roc(response=y[ subsample[[r]]$leave ], 
+         predictor=y_pred)
+rocs[[method]]=ROC
+if (method=="u")
+plot(ROC,
+     legacy.axes = TRUE,
+     xlim = c(1, 0),        # Desired limits
+     xaxs = "i",            # Prevent automatic padding
+     ylim = c(0, 1),        # Optional: force y-limits too
+     yaxs = "i",            # Prevent vertical padding
+     asp = NA,               # Avoid forced aspect ratio
+     col=colormap[[method]],
+      mar = c(5, 4, 2, 2)
+) else
+plot.roc(ROC, main=method, add=TRUE,, col=colormap[[method]], xlim=c(1,0),
+     legacy.axes=TRUE)
+}
+legend("bottomright",legend=c("u","md1D","md12D","md12Dp"),lwd=2,col=colormap
+)
+```
+
+```{r}
+lapply(rocs, auc)
+roc.test(rocs$md12Dp, rocs$u)
+roc.test(rocs$md12Dp, rocs$md1D)
+roc.test(rocs$md12Dp, rocs$md12D)
+```
+```{r}
+
+roc.test(rocs$md12Dp, rocs$md1D)
+
 
 ```
 

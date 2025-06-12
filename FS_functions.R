@@ -36,10 +36,10 @@ return(list(relevant.variables=which(pva<lvl),
 #helper function to binarize taxa abundance table
 # columns -taxons, rows - samples
 
-binarize_taxa<- function(taxonomy, binarize_on_median=TRUE){
+binarize_taxa<- function(taxonomy, thresholds){
+  stopifnot(length(thresholds)==ncol(taxonomy))
   taxonomy<- as.matrix(taxonomy)
-meds= if (binarize_on_median) colMedians(taxonomy) else rep(0,ncol(taxonomy))
-tb<- t( t(taxonomy)>meds )*1. #exploits recycling mechanism of R:
+tb<- t( t(taxonomy)>thresholds)*1. #exploits recycling mechanism of R:
 			      #column [[i]] of `taxonomy` gets binarized by meds[[i]]
 return(tb)}
 
@@ -122,6 +122,56 @@ only_partners<- function( annotated_partner_df, MDFS_1D_result  ) {
 	setdiff(true_synergistic, annotated_partner_df$rel_name)
 }
 
+#given the result of find_true_partners()
+#and binarization thresholds (named vector, one entry per variable, its names must include all partner and relevant variable names
+# in annotated_partner_df), function returns a data.frame with one row per each synergisitc pair in the data
+# columns 1,2 are names of relevant variable and its partner, while 3,4 are corresponding binarization thresholds (X_b = 1 if X > thr else X_b=0)
+
+fit_interactions<- function( annotated_partner_df, bin_thresholds){
+	stopifnot( all(union(annotated_partner_df$rel_name, annotated_partner_df$partner_name) %in% names(bin_thresholds)) )
+	pairs<- annotated_partner_df[ annotated_partner_df$synergy, c("rel_name","partner_name"), drop=FALSE ]
+	if (nrow(pairs)){
+		tholds_pairs<- do.call(rbind, apply(pairs,1, function(PAIR) bin_thresholds[c(PAIR[[1]], PAIR[[2]])],simplify=FALSE ) ) |> as.data.frame()
+		res=cbind(pairs, tholds_pairs)	
+		colnames(res)<-c("rel_name","partner_name","rel_thr","partner_thr")
+		return(res) 
+	} else {
+		return(NA)
+	}
+}
+
+# given output of fit_interactions, this function creates a matrix of discrete predictors based on interaction of all pairs present in fitted_interaction_data (as rows)
+# names of synthetic variables are REL_NAME__(x)__PARTNER_NAME
+
+generate_interaction_variables<- function(X, fitted_interaction_data){
+
+	sufficient_subset<-union(fitted_interaction_data$rel_name, fitted_interaction_data$partner_name)
+	X_sub<- X[, sufficient_subset, drop=FALSE]
+	#construct a map from names of variables to their binarization thresholds
+	sapply(colnames(X_sub), function(v_name) if (v_name %in% fitted_interaction_data$rel_name) {
+	       							fitted_interaction_data$rel_thr[ which(fitted_interaction_data$rel_name == v_name)[[1]] ]
+						} else {
+						    fitted_interaction_data$partner_thr[ which(fitted_interaction_data$partner_name== v_name)[[1]] ]
+						}
+	)-> X_sub_tholds
+	#binarize 
+	X_sub_b<- binarize_taxa( X_sub,X_sub_tholds)
+	# use binarized variables to build interactions
+	interactions<- matrix(nrow=nrow(X),ncol=nrow(fitted_interaction_data))	
+	for (i in 1:nrow(fitted_interaction_data))
+		interactions[,i]= interaction( X_sub_b[, fitted_interaction_data$rel_name[[i]] ],
+					       X_sub_b[, fitted_interaction_data$partner_name[[i]] ]
+					     ) |> as.integer()
+	colnames(interactions)<- sapply(1:nrow(fitted_interaction_data), function(i) 
+						paste0(fitted_interaction_data$rel_name[[i]], 
+						       "__(x)__", 
+						       fitted_interaction_data$partner_name[[i]] ))
+	return(interactions)
+}
+
+
+
+
 
 #function performs 1D & 2D analysis jointly
 #for 2 discretization methods for features in X (based on 0, or median of each col in X)
@@ -146,9 +196,11 @@ MDFS_FS<- function(X, y, lvl=0.05,
 		   seed=NULL,
 		   mc=30){
    attributes(y)<-NULL
-   binarize_taxa(X,binarize_on_median = TRUE)|> filter_sparse_cols(thr=mc) -> Xm
-   
-   binarize_taxa(X,binarize_on_median = FALSE)|> filter_sparse_cols(thr=mc) -> X0
+   tholds_m= colMedians(X|> as.matrix()) 
+   binarize_taxa(X,tholds_m)|> filter_sparse_cols(thr=mc) -> Xm
+   tholds_0= rep(0,ncol(X)) 
+   binarize_taxa(X,tholds_0)|> filter_sparse_cols(thr=mc) -> X0
+   names(tholds_m)<-names(tholds_0)<- colnames(X)
    to_keep<- c("statistic","p.value","adjusted.p.value","relevant.variables")
    MDFS.discrete(data=Xm,decision = y,dimensions = 1,
                       p.adjust.method = p.adjust.method,
@@ -164,9 +216,13 @@ MDFS_FS<- function(X, y, lvl=0.05,
 		      level=0.05,seed=seed)[to_keep]-> res_2D0
   
    res_1Dm$rel_set= colnames(Xm)[res_1Dm$relevant.variables]
+   res_1Dm$feature_names= colnames(Xm)
    res_2Dm$rel_set= colnames(Xm)[res_2Dm$relevant.variables]
+   res_2Dm$feature_names= colnames(Xm)
    res_1D0$rel_set= colnames(X0)[res_1D0$relevant.variables]
+   res_1D0$feature_names= colnames(X0)
    res_2D0$rel_set= colnames(X0)[res_2D0$relevant.variables]
+   res_2D0$feature_names= colnames(X0)
 
    res_2Dm$partner_df= get_interaction_partner(dataset=Xm, decision=y,
 					       	interesting.vars= res_2Dm$relevant.variables)
@@ -179,6 +235,11 @@ MDFS_FS<- function(X, y, lvl=0.05,
    res_2D0$partner_df= find_true_partners( partner_data_frame= res_2D0$partner_df, 
 					   MDFS_1D_result= res_1D0)
    res_2D0$partner_set=only_partners(annotated_partner_df= res_2D0$partner_df, res_1D0)
+
+   fit_interactions( annotated_partner_df=res_2Dm$partner_df, bin_thresholds= tholds_m) -> m2D_interaction_data
+   fit_interactions( annotated_partner_df=res_2D0$partner_df, bin_thresholds= tholds_0) -> z2D_interaction_data
+   res_2Dm$interaction_data<- m2D_interaction_data
+   res_2D0$interaction_data<- z2D_interaction_data
 
    RESULT<-list(
      res_1Dm=res_1Dm,
