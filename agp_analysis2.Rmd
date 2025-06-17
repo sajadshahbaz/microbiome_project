@@ -493,7 +493,7 @@ long_perf <- melt(performance,
 
 ```
 ```{r}
-#install.packages("ggplot2")
+install.packages("ggplot2")
 library(ggplot2)
 
 # Violin plot to show distribution
@@ -646,6 +646,10 @@ viz_fs_df[,2:5]<- round(viz_fs_df[,2:5],2)
 viz_fs_df[order(-viz_fs_df$IG2D) , ]
 ```
 
+
+
+
+
 ```{r}
 pab_df<- data.frame(taxon=plausible,
                         ab= colMeans(abundance_per_rep),
@@ -733,6 +737,151 @@ max(sapply(plausible,
                            table(partners_per_rep[,taxon])[[which.max(table(taxon))]] |> unname()
                            ))
 
+```
+
+
+
+```{r}
+
+viz_fs_df2<-viz_fs_df[,c("taxon","IG2D","IG1D","rel_1D","rel_2D")]
+viz_fs_df2$best_partner=sapply(plausible,
+                         function(taxon){ if (taxon %in% colnames(partners_per_rep))
+                           names(table(partners_per_rep[,taxon]))[[which.max(table(taxon))]]
+                           else "foo"
+                         }
+                    )
+
+viz_fs_df2$partnership_freq=sapply(plausible,
+                         function(taxon){ if (taxon %in% colnames(partners_per_rep))
+                           unname(table(partners_per_rep[,taxon])[[which.max(table(taxon))]])
+                           else "foo"
+                         }
+                    )
+fs_df2<- viz_fs_df2
+fs_df2$taxon<- fs_df$taxon
+viz_fs_df2$best_partner<- sapply( strsplit(viz_fs_df2$best_partner, split='\\.'), function(x) x[[length(x)]] )
+```
+
+```{r}
+
+viz_fs_df2
+
+```
+
+
+```{r}
+
+rel1D2D_strong_partnerships<-fs_df2[(fs_df2$rel_2D==500) &
+  (fs_df2$rel_1D==500) &
+  (fs_df2$partnership_freq>=250),] 
+
+short_taxon<-sapply( strsplit(rel1D2D_strong_partnerships$taxon, split='\\.'), function(x) x[[length(x)]] )
+short_partner<-sapply( strsplit(rel1D2D_strong_partnerships$best_partner, split='\\.'), function(x) x[[length(x)]] )
+
+for (i in 1:nrow(rel1D2D_strong_partnerships)){
+  rel1D2D_strong_partnerships$taxon
+  rel <- as.integer(taxonomy.mean.final[, rel1D2D_strong_partnerships$taxon[[i]]] > 0)
+  partner <- as.integer(taxonomy.mean.final[, rel1D2D_strong_partnerships$best_partner[[i]] ] > 0)
+ 
+  # Print header
+  cat("\n\n---\n")
+  cat(sprintf("### Pair %d: %s vs %s\n", i, short_taxon[[i]], short_partner[[i]]))
+  
+  # Print frequency
+  cat(sprintf("**Partnering frequency**: %d\n\n", rel1D2D_strong_partnerships$partnership_freq[[i]]))
+  # Tabulate
+  tab <- table(Rel = rel, Partner = partner, Class = decision.mean.final)
+  print("y==0 | y==1")
+  print(cbind(tab[,,1], tab[,,2] ))
+}
+```
+
+
+```{r}
+
+n_vars <- ncol(partners_per_rep)  
+
+
+ppr<- partners_per_rep
+colnames(ppr)<-sapply(strsplit(colnames(partners_per_rep), "\\."),function(x) x[[length(x)]])
+for (j in 1:ncol(ppr)) ppr[,j]= c( ppr[,j][is.na(ppr[,j])], sort(ppr[,j][!is.na(ppr[,j])]))
+ppr<- as.data.frame(ppr)
+for (j in 1:ncol(ppr)) ppr[,j]<- as.factor(ppr[,j]) |> as.integer()
+ppr<- ppr[do.call(order, c(ppr, na.last=FALSE )),]
+ppr<- as.matrix(ppr)
+library(RColorBrewer)
+
+n_cols <- ncol(ppr)
+n_rows <- nrow(ppr)
+
+# Function to generate colors for each column based on unique non-NA values
+get_col_palette <- function(col_vals) {
+  unique_vals <- sort(unique(col_vals[!is.na(col_vals)]))
+  n_levels <- length(unique_vals)
+  
+  base_colors <- brewer.pal(min(max(n_levels, 3), 8), "Set1")
+  if (n_levels > length(base_colors)) {
+    base_colors <- rep(base_colors, length.out = n_levels)
+  }
+  
+  # Map unique_vals to consecutive indices: 1, 2, 3, ...
+  mapping <- setNames(seq_along(unique_vals), unique_vals)
+  
+  # Return list with color vector and mapping
+  list(
+    colors = base_colors,
+    mapping = mapping
+  )
+}
+
+# Create a color matrix matching ppr's entries (including NAs)
+color_mat <- matrix(NA, nrow = n_rows, ncol = n_cols)
+
+for (j in 1:n_cols) {
+  pal_list <- get_col_palette(ppr[, j])
+  pal_colors <- pal_list$colors
+  pal_map <- pal_list$mapping
+  
+  for (i in 1:n_rows) {
+    val <- ppr[i, j]
+    if (is.na(val)) {
+      color_mat[i, j] <- "grey"
+    } else {
+      # Use mapping to get index for color
+      idx <- pal_map[as.character(val)]
+      color_mat[i, j] <- pal_colors[idx]
+    }
+  }
+}
+
+
+
+# Plot with image()
+# image() expects numeric matrix, so we map colors to numbers
+# Create a vector of unique colors in color_mat for the palette
+
+all_colors <- unique(as.vector(color_mat))
+all_colors <- all_colors[!is.na(all_colors)]
+
+# Map colors to integers for image()
+color_indices <- matrix(match(color_mat, all_colors), nrow = n_rows, ncol = n_cols)
+
+# image() plots columns from left to right and rows from bottom to top,
+# so to have top rows at top, we flip rows
+
+par(mar = c(15, 4, 1, 2) + 0.1)  # increase bottom margin to 6 lines (default is 5.1)
+
+image(t(apply(color_indices, 2, rev)),
+      col = all_colors,
+      axes = FALSE,
+      xlab = NA,
+      ylab = "Trials",
+      main = "Distinct partners per variable in each repeat")
+
+# Add axis labels
+axis(1, at = seq(0,1,length.out = n_cols), labels = colnames(ppr), las=2)
+axis(2, at = seq(0,1,length.out = n_rows), labels =NA)
+box()
 ```
 
 
