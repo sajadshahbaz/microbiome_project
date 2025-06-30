@@ -681,11 +681,11 @@ bacteria_only_2D<-fs_df$taxon[(fs_df$rel_2D>450)&(fs_df$rel_1D<450)]
 
 partners_only2D<- sapply(bacteria_only_2D,
                          function(taxon)
-                           names(table(partners_per_rep[,taxon]))[[which.max(table(taxon))]]
+                           names(table(partners_per_rep[,taxon]))[[which.max(table(partners_per_rep[,taxon]))]]
                            )
 partners_only2D_freq<- sapply(bacteria_only_2D,
                          function(taxon)
-                           table(partners_per_rep[,taxon])[[which.max(table(taxon))]] |> unname()
+                           table(partners_per_rep[,taxon])[[which.max(table(partners_per_rep[,taxon]))]] |> unname()
                            )
 
 # for (i in seq_along(bacteria_only_2D)){
@@ -746,14 +746,14 @@ max(sapply(plausible,
 viz_fs_df2<-viz_fs_df[,c("taxon","IG2D","IG1D","rel_1D","rel_2D")]
 viz_fs_df2$best_partner=sapply(plausible,
                          function(taxon){ if (taxon %in% colnames(partners_per_rep))
-                           names(table(partners_per_rep[,taxon]))[[which.max(table(taxon))]]
+                           names(table(partners_per_rep[,taxon]))[[which.max(table(partners_per_rep[,taxon]))]]
                            else "foo"
                          }
                     )
 
 viz_fs_df2$partnership_freq=sapply(plausible,
                          function(taxon){ if (taxon %in% colnames(partners_per_rep))
-                           unname(table(partners_per_rep[,taxon])[[which.max(table(taxon))]])
+                           unname(table(partners_per_rep[,taxon])[[which.max(table(partners_per_rep[,taxon]))]])
                            else "foo"
                          }
                     )
@@ -894,10 +894,10 @@ set.seed(3423)
 r<- sample(1:n_repeats,1)
 for (method in c("u","md1D","md12D","md12Dp")){
 
-colormap<- c(u="gray",
+colormap<- c(u="purple",
              "md1D"="green",
              "md12D"="blue",
-             "md12Dp"="pink"
+             "md12Dp"="red"
              )
 fname=sprintf(model_file_string,r,method,lop)
 RF_mr<- readRDS(fname)
