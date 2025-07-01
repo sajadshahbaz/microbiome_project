@@ -1,6 +1,6 @@
 ---
 title: "Information Theory and Machine Learning Reveal Synergistic Interactions in
-  Gut Microbiota Related to Food Allergy - data analysis pipeline"
+  Gut Microbiota Related to Disease - data analysis pipeline"
 output:
   html_document:
     toc: true
@@ -11,68 +11,102 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+
 # Initial data preparation
 
 Read the raw taxonomy abundance info and metadata from delimiter separated files.
 
 ```{r read}
-metadata.filename <- "metadata.csv"
-taxa.filename <- "taxa.tsv"
+metadata.filename <- "merged_metadata.txt"
+taxa.filename <- "merged_taxonomy.txt"
 tdata <- as.data.frame(t(read.delim(taxa.filename, header = TRUE, sep = "\t")))
 colnames(tdata) <- tdata[1,]
 tdata <- tdata[-1,]
 
-metadata<-read.csv(metadata.filename, header = TRUE, sep = ",")
-rownames(metadata)<-metadata[,1]
-metadata<-metadata[,-1]
+metadata<-read.delim(metadata.filename, header = TRUE, sep = "\t")
+#rownames(metadata)<-metadata[,1]
+#metadata<-metadata[,-1]
 
 ```
 
-## Filtering of erroneus data
+## Selection of the cohorts with reasonable class sizes
 
 
 ```{r}
-library(magrittr)
-c("sex","height.cm","weight.kg","age.years")-> confounding_factors
-confounding_factors %in% colnames(metadata)
-metadata$sex[!(metadata$sex %in% c("male","female"))]<- NA
-metadata$height[metadata$height.cm<38]<-NA
-metadata$weight[metadata$weight.kg<1]<-NA
-metadata$age_years[metadata$age.years<=0]<-NA
-metadata$height[metadata$height.cm>220]<-NA
-metadata$weight[metadata$weight.kg<=1]<-NA
-metadata$weight[metadata$weight.kg>200]<-NA
-to_remove_mask <- (metadata[,confounding_factors] %>% is.na() %>% rowSums()) > 0
-metadata<-metadata[!to_remove_mask, ]
+
+read.table("duze.asc") |> unlist() |> unname() -> cohort_ids 
+cohort_ids[[2]]="HMP_2019_t2d"
+cohort_ids<- cohort_ids[-c(2,4)]
+lapply(cohort_ids, function(id){
+  print(id)
+  print(metadata$category[metadata$cohort==id] |> table())
+}
+  ) |> invisible()
+
+```
+
+#### Binary problem preparation
+
+Healthy vs rest.
+
+Decision vectors are stored in a list `decision`, `decision$cohort_name` gives the vector for the corresponding cohort "`cohort_name`". 
+
+1 encodes the state of disease present, 0 - healthy.
+
+exact disease names encoded by 1 can be seen by inspecting `attr(decision$cohort_name, "code_dict")`
+
+```{r}
+
+lapply(cohort_ids,
+       function(id){
+         dec<-metadata$category[metadata$cohort==id] |> as.character()
+         unique(dec)-> classes
+         classes[classes!="healthy"] |> paste0( collapse="_or_") -> other
+         dict= list(healthy=0,
+                    other=1)
+         names(dict)[[2]]<-other
+         y=rep(0, length(dec))
+         y[dec!="healthy" ]=1
+         attr(y,"code_dict")<-dict
+         names(y)<- metadata$sample[metadata$cohort==id]
+         return(y)
+       }
+         )-> decision
+names(decision)<-cohort_ids
+
 ```
 
 ### Taxa table preparation 
 
-#### Bacteria selection and stool samples filtering
+Similarly, taxa abundances are stored in list of data.frames, one row per sample. Row order is obviously matched with the ordering of the samples in the corresponding decision vector.
+
+#### Remove cohorts with no fully matching ids between taxa abundance and metadata
 
 ```{r}
-#1. skip non bacterial taxa
-tdata<- tdata[, grep('sk__Bacteria', colnames(tdata)) ]
-print("inital number of taxa samples")
-print(nrow(tdata))
-#2. keep stool samples
-metadata$env_material-> sample_source
-feces_rownames<- rownames(metadata)[ sample_source=="feces" ]
-tdata<-tdata[ intersect(rownames(tdata),feces_rownames),] 
-print("number of taxa samples from stool")
-print(nrow(tdata))
+allOK <-sapply(decision, function(y) length(intersect(names(y), rownames(tdata) ))==length(names(y)))
+cohort_ids<- cohort_ids[allOK]
+decision<- decision[allOK]
+taxa<- lapply(decision, function(y)
+                tdata[names(y),])
+taxa<-lapply(taxa, function(df)
+                    lapply(df, as.numeric) |> as.data.frame()
+  )
+
+for (i in seq_along(taxa)) rownames(taxa[[i]])= names(decision[[i]])
+
 ```
+
+This left 3 cohorts available for further investigation.
 
 #### Alpha diversity analysis and normalization
 
-Normalize abundancies and use proportions to calculate 3 versions of alpha diversity indexes. Below plots show values of alpha diversity as a function of the rank of cumulative count of each sample.
-Investigation suggests a common cutoff point, which corresponds to minimum cumulative count of `3636`.
+Normalize abundances and use proportions to calculate 3 versions of alpha diversity indexes and plot them against the cumulative abundance in each sample. 
+
+
 
 ```{r}
-  t_rownames<- rownames(tdata)
-  tdata<- lapply(tdata, as.numeric) %>% as.data.frame()
-  rownames(tdata)<- t_rownames
-  lib_sizes<- rowSums(tdata) 
+diversity_indices<- function(tdata, data_name){
+lib_sizes<- rowSums(tdata) 
   t_props<-( tdata
             )/lib_sizes #due to R recycling, each row gets divided by its sum
   shannon_div<- -rowSums((t_props+1e-10)*log(t_props+1e-10))
@@ -80,20 +114,1058 @@ Investigation suggests a common cutoff point, which corresponds to minimum cumul
   inverse_simp<- 1/rowSums( t_props^2 )
   size_order<-order(lib_sizes)
 
-  taxa_min_lib_size= 3636 
-  crit_rank= which.min(abs(lib_sizes[size_order] - taxa_min_lib_size))
+  #taxa_min_lib_size= 3636 
+  #crit_rank= which.min(abs(lib_sizes[size_order] - taxa_min_lib_size))
 
-  plot(shannon_div[size_order],type='l')
-  abline(v = crit_rank, col="red",lwd=2) 
-  plot(simpson_index[size_order],type='l')
-  abline(v = crit_rank, col="red",lwd=2) 
-  plot(inverse_simp[size_order],type='l')
-  abline(v = crit_rank, col="red",lwd=2) 
-
-
-  tdata<- tdata[ rowSums(tdata) >= taxa_min_lib_size, ]
-  tdata<- tdata/rowSums(tdata)
+  plot(shannon_div[size_order],type='l', main=data_name, 
+       ylab="shannon diversity", xlab="library size rank")
+  #abline(v = crit_rank, col="red",lwd=2) 
+  plot(simpson_index[size_order],type='l', main=data_name,
+       ylab="simpson diversity",xlab="library size rank")
+  #abline(v = crit_rank, col="red",lwd=2) 
+  plot(inverse_simp[size_order],type='l', main=data_name,
+       ylab="inverse simpson index",xlab="library size rank")
+  #abline(v = crit_rank, col="red",lwd=2) 
+}
 ```
+
+
+```{r}
+ mapply(diversity_indices, taxa, names(taxa)) |> invisible()
+```
+
+
+At this stage of preprocessing, we do not see any evidence for clear relationship between diversity value and the cumulative abundance, so we do not filter the data further in the "samples" dimension.
+
+Finally, we normalize by total sample abundance:
+
+```{r}
+
+lapply(taxa, function(data) data/rowSums(data))-> taxa
+
+```
+
+
+#### Binarization
+
+Below plot shows number of non-zero entries in the abundance table per each column (taxon).
+These values are seen on Y axis, while each position on X axis corresponds to each taxon.
+Horizontal line is drawn at 30.
+
+```{r}
+
+mapply(function(data, name)
+  {(colSums(data>0))|> sort() |> plot(main=sprintf("%s, nubmers of non zero entries per taxa
+  # of taxa w/ # of non zero entries>=30 = %d",name, sum(colSums(data>0)>=30)  ),
+  xlab="# non zero entries",ylab="taxon"); abline(h=30)},
+  taxa,names(taxa)) |> invisible()
+
+
+```
+As expected, majority of taxa are very sparse. For our purposes, we limit the analysis to those which have at least 30 non-zero entries.
+
+As for the binarization, we apply it separately per each variable (taxon). 
+We use two approaches: binarization based on median or zero. 
+In case of median, entries of normalized abundance $\leq$ median for each taxon are zeroed out, while for "zero" strategy, zero entries get mapped to zeros an other to ones. 
+The only difference will be visible in case of common taxa, being present in more than half of the samples.
+
+### test FS procedures through subsampling validation
+
+Here, we set up the procedure into one pipeline and to further validate our findings, we subject it to resampling procedure, repeating 30 times the following protocol:
+
+- leave random 37% of the samples out (keep it as Out Of Bag (OOB) data)
+
+- apply feature selection methods on the remaining 90% of the samples. For MDFS this also includes repeating binarization 'from scratch' on each trial.
+
+- for each feature set from previous step, train random forest classifiers on in-bag data using the features obtained from each method.
+
+- record the performance of the classifiers on OOB data.
+
+This resampling strategy is known in literature as `jackknife`.
+
+`FS_functions.R` contains functions for performing MDFS based feature selection and U-test wrapper. Functions take `X` as an input feature table and `y` as the trait of interest and return indices of relevant variables (columns in `X`), corresponding feature scores and their p-values. 
+
+`MDFS_FS` performs MDFS in 1D and 2D mode, using 2 binarisation methods (median or zero based) and returns, along with the mentioned components, data on the identified interactions.
+
+Output of `MDFS_FS` is composed of 4 sublists (1 per each mentioned variant). 
+2 sublists (those from 2D mode) contain fields `partner_df`, `partner_set` and `interaction_data` which contain information on the pairwise interactions relevant to `y`. 
+
+- `partner_df` is a data.frame with one row per each pair of 2D relevant variable with some other variable, that increased its information on gain on `y` by meaningful amount.
+We set this threshold to the minimum IG obtained for relevant variables in 1D.
+
+- `partner_set` contains names of the taxa that were found as partners, but were not relevant in 2D by themselves.
+
+- `interaction_data` extends the information on the interaction in `partner_set` and can be used to obtain synthetic variables, one per each interaction, that can be used in inference problems, along with regular features.
+Function `generate_interaction_variables()`, enumerates 4 states in each interaction, according to the increasing probablity of `y==1`. 
+Thus, based on `interaction_data`, it can create an array of additional, discrete, ordinal features.
+
+#### Subsampling sets preparation
+
+
+```{r}
+
+source("subsample_nonrepeating_donors.R")
+n_repeats=500
+lop=0.37
+if (!file.exists("new_cohorts_subsample.rds")){
+subsample<- list()
+for (cohort in cohort_ids) {
+	IDs1<-names(decision[[cohort]][ decision[[cohort]]==1 ]) 
+	IDs0<-setdiff(names(decision[[cohort]]), IDs1)
+	subsample[[cohort]]=list()
+		for (r in 1:n_repeats){
+		set.seed(r)
+		keep1<- sample(IDs1, floor((1-lop)*length(IDs1)),replace=FALSE)
+		keep0<- sample(IDs0, floor((1-lop)*length(IDs0)),replace=FALSE)
+		subsample[[cohort]][[r]]= list()
+		subsample[[cohort]][[r]]$keep= c( keep1, keep0)
+		subsample[[cohort]][[r]]$leave= setdiff(names(decision[[cohort]]),
+							c(keep1,keep0))
+		}
+	}
+	saveRDS(subsample,"new_cohorts_subsample.rds")
+}else{
+subsample<- readRDS("new_cohorts_subsample.rds")
+} 
+```
+
+#### Testing 
+
+```{r}
+library(MDFS)
+source("FS_functions.R")
+lop=0.37
+library(randomForest)
+set.seed(123)
+n_repeats=30
+lapply(cohort_ids, function(._) sample.int(452332,n_repeats))-> seeds
+names(seeds)<-cohort_ids
+
+
+features<- list(md1D=list(),
+                md12D=list(),
+                md12Dp=list(),
+                u=list()
+                )
+for (fs in names(features))
+	for (coh in cohort_ids)
+	features[[fs]][[coh]]=list()
+
+		#cohort name    #repeat	  #leave out perc.
+fs_j_pattern="features/%s_fs_set_j=%d_lop=%.2f.rds"
+
+full_MDFSres<- full_Ures<-list()
+for (coh in cohort_ids) full_MDFSres[[coh]]<-full_Ures[[coh]]<-list()
+
+for (j in 1:n_repeats){
+for (coh in cohort_ids){
+
+  fs_j_fname= sprintf(fs_j_pattern,coh,j,lop)
+  if(!file.exists(fs_j_fname)){
+	  message(fs_j_fname)
+	  set.seed(seeds[[coh]][[j]])
+	MDFS_FS(X= taxa[[coh]][ subsample[[coh]][[j]]$keep, ], 
+	      y= decision[[coh]][ subsample[[coh]][[j]]$keep ], lvl=0.05, p.adjust.method = "holm",
+	      seed= seeds[[coh]][[j]],
+	      mc=30 #minimum allowed class size of binarized taxa abundance
+	      )-> all_mdfs_j
+	U_test_FS(X= taxa[[coh]][ subsample[[coh]][[j]]$keep, ], 
+	      y= decision[[coh]][ subsample[[coh]][[j]]$keep ],
+		lvl = 0.05,
+		p.adjust.method = "holm")->u_j
+	fs_j=list(mdfs=all_mdfs_j, u=u_j)
+	saveRDS(fs_j, fs_j_fname)
+  				} else
+				{
+	fs_j= readRDS(fs_j_fname)
+        all_mdfs_j=fs_j$mdfs
+        u_j=fs_j$u
+				}
+	full_MDFSres[[coh]][[j]]=all_mdfs_j
+  	full_Ures[[coh]][[j]]=u_j
+
+	features$u[[coh]][[j]]=u_j$rel_set
+	features$md1D[[coh]][[j]]=union(all_mdfs_j$res_1Dm$rel_set, all_mdfs_j$res_1D0$rel_set)
+        features$md12D[[coh]][[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$rel_set, 
+                                                  all_mdfs_j$res_2D0$rel_set,
+                                                  features$md1D[[coh]][[j]]))
+        features$md12Dp[[coh]][[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$partner_set,
+                                                       all_mdfs_j$res_2D0$partner_set,
+                                                  features$md12D[[coh]][[j]]))
+
+  	model_file_string="RF_models/%s_j=%d_fs=%s_lop=%.2f.rds"
+  	for (fs_method in c(names(features),"md12DpInt" )){
+    		fname=sprintf(model_file_string,coh,j,fs_method,lop)
+		if (!file.exists(fname)){
+		message(fname)
+		set.seed(seeds[[coh]][[j]])
+		RF_fs_j=NA
+		f_key <- if(fs_method=="md12pInt") "md12Dp" else fs_method
+		if (length(features[[f_key]][[coh]][[j]])) {
+			X_keep<- taxa[[coh]][ subsample[[coh]][[j]]$keep, ,
+					     drop=FALSE ]
+			X_keep_sel<- X_keep[, features[[f_key]][[coh]][[j]], drop=FALSE ]
+			X_rf<- X_keep_sel
+			if (fs_method=="md12DpInt")
+				{
+				if (length(full_MDFSres[[coh]][[j]]$res_2Dm$interaction_data)>1) {
+					interaction_xm<- generate_interaction_variables(
+										X_keep,
+							full_MDFSres[[coh]][[j]]$res_2Dm$interaction_data)
+					X_rf<- cbind(X_rf, interaction_xm)
+					}
+				if (length(full_MDFSres[[coh]][[j]]$res_2D0$interaction_data)>1) {
+					interaction_x0<- generate_interaction_variables(
+										X_keep,
+							full_MDFSres[[coh]][[j]]$res_2D0$interaction_data)
+					X_rf<- cbind(X_rf, interaction_x0)
+					}
+
+				}
+
+			y_rf<- decision[[coh]][ subsample[[coh]][[j]]$keep ] |> as.factor()
+			RF_fs_j= randomForest(x= X_rf,
+					      y=y_rf)
+			}
+		  saveRDS(RF_fs_j, file=fname)
+		}
+	
+	}	
+	
+}
+message(sprintf( "%d / %d done", j, n_repeats))
+}
+
+
+
+
+```
+
+
+```{r}
+
+library(pROC)
+n_repeats=500
+n_repeats=30
+source("balanced_decision.R")
+METHODS=c(names(features),"md12DpInt")
+METRICS=c("AUC","OR")
+odds_ratio<- function(y_pred, y){
+ # if(length(unique(y_pred))<2){
+    #print(sprintf("bad table %s %s",method, cohort));
+  #  return(1)}
+  stopifnot(length(unique(y))==2)
+  CM= matrix(nrow=2,ncol=2)
+  CM[1,1]=sum( (y_pred==0) & (y==0))
+  CM[2,1]=sum( (y_pred==1) & (y==0))
+  CM[1,2]=sum( (y_pred==0) & (y==1))
+  CM[2,2]=sum( (y_pred==1) & (y==1))
+  if (any(CM==0)) CM= CM + 1
+  (CM[2,2]*CM[1,1])/(CM[1,2]*CM[2,1])
+}
+
+if (!file.exists("performance_additional.rds")) {
+performance=array(dim = c(length(cohort_ids),
+                          length(METHODS),length(METRICS),
+                          n_repeats),
+                  dimnames = list(cohort_ids,
+                                  METHODS,
+                                  METRICS,
+                                  NULL  #500 repeats
+                                  )
+                  )
+
+pred_thr= array(NA, dim= c(length(cohort_ids),
+                           length(METHODS),n_repeats),
+                 dimnames = list(cohort_ids,
+                                  METHODS,
+                                  NULL  #500 repeats
+                                  )
+)
+
+for (j in 1:n_repeats){
+  for (coh in cohort_ids){
+  for (method in METHODS){
+    fname=sprintf(model_file_string,coh,j,method,lop)
+  RF_mj<- readRDS(fname)
+  no_features<- (length(RF_mj)==1)
+    if (no_features){ 
+      print(sprintf("null %s %s",coh,method))
+      performance[coh,method,"AUC",j]=0.5
+      performance[coh,method,"OR",j]=1
+    } else {
+    f_key= if (method %in% names(features)) method else "md12Dp"
+    X_test<- taxa[[coh]][ subsample[[coh]][[j]]$leave, ,drop=FALSE]
+    X_rf<- X_test[, features[[f_key]][[coh]][[j]], drop=FALSE ]
+    if (method=="md12DpInt"){
+      if (length(full_MDFSres[[coh]][[j]]$res_2Dm$interaction_data)>1){
+                    interaction_xm<- generate_interaction_variables(X_test, full_MDFSres[[coh]][[j]]$res_2Dm$interaction_data)
+                    X_rf<- cbind(X_rf, interaction_xm)
+              } 
+      if (length(full_MDFSres[[coh]][[j]]$res_2D0$interaction_data)>1){
+                    interaction_x0<- generate_interaction_variables(X_test, full_MDFSres[[coh]][[j]]$res_2D0$interaction_data)
+                    X_rf<- cbind(X_rf, interaction_x0)
+      } 
+    X_rf_ref<-X_rf
+    }
+    test_pred= predict(RF_mj, newdata=  X_rf,
+                      type="prob"  )[,2]
+    y_thr= balanced.decision(x = RF_mj$votes[,2], 
+                             y= decision[[coh]][   subsample[[coh]][[j]]$keep ] )$threshold
+    pred_thr[coh,method,j]=y_thr
+    y_pbin<- (test_pred >= y_thr)
+    confusion=table(Predicted=y_pbin,Actual= decision[[coh]][   subsample[[coh]][[j]]$leave ] )
+    performance[coh,method,"AUC",j]= auc(response=decision[[coh]][   subsample[[coh]][[j]]$leave ],
+                                        predictor=test_pred,quiet=TRUE)|> as.numeric() 
+    performance[coh,method,"OR",j]=  odds_ratio(y_pbin, decision[[coh]][   subsample[[coh]][[j]]$leave ])
+    
+    }
+  }
+  j_= j-1
+  if (j_==0) message(paste0(rep("_",n_repeats %/% 10),collapse=""))
+  if ((j_>0) && (j_ %% 10 == 0)) cat("#")
+  }
+}
+
+} else {
+  performance<-readRDS("performance_additional.rds")
+}
+
+
+
+```
+
+```{r}
+
+library(reshape2)
+long_perf <- melt(performance, 
+                  varnames = c("Cohort", "Method", "Metric", "Repeat"), value.name = "Value")
+
+
+```
+
+
+```{r}
+library(ggplot2)
+#library(dplyr)
+#summary_lines <- long_perf %>%
+#  group_by(Metric, Method) %>%
+#  summarise(
+#    median = median(Value),
+#    notch_lower = quantile(Value, 0.25) + 1.57 * IQR(Value) / sqrt(n()),
+#    notch_upper = quantile(Value, 0.75) - 1.57 * IQR(Value) / sqrt(n()),
+#    .groups = "drop"
+#  )
+
+
+# Violin plot to show distribution
+long_perf<- long_perf[long_perf$Method!="md12DpInt",]
+ggplot(long_perf, aes(x = Method, y = Value, fill = Method)) +
+  #geom_violin(trim = FALSE, alpha = 0.7) +
+  geom_boxplot(width = 0.3, color = "black", notch = TRUE) +
+   #geom_hline(data = summary_lines, aes(yintercept = median, color = Method), linetype = "solid") +
+
+  # Add dashed lines for notches
+#  geom_hline(data = summary_lines, aes(yintercept = notch_lower, color = Method), linetype = "dashed") +
+ # geom_hline(data = summary_lines, aes(yintercept = notch_upper, color = Method), linetype = "dashed") +
+  facet_wrap( Metric~Cohort, scales = "free_y") +  # Separate plots for AUC and OR
+  #theme_minimal() +
+  labs(title = sprintf("Performance Metric Distributions by Method, l.o.frac= %.2f",lop),
+       y = "Value", x = "Feature Selection Method") +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+
+
+
+universe<- colnames(taxa[[1]])
+
+features_AP_95<- list()
+frequent_<- list(over95= .95*n_repeats, over90=.9*n_repeats)
+
+for (coh in cohort_ids){
+do.call(rbind,lapply(
+features, function(method) Reduce("+", lapply(method[[coh]], function(x) universe %in% x))))->feature_absence_presence
+
+colnames(feature_absence_presence)<-universe
+
+feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over90)] -> features_AP_90[[coh]]
+}
+
+```
+
+
+```{r}
+
+features_AP_90$JieZ_2017 |> t()
+features_AP_90$MetaCardis_2020_a |> t()
+features_AP_90$YachidaS_2019|> t()
+```
+
+
+```{r}
+
+#hist(taxa$JieZ_2017[ decision$JieZ_2017==1 ,"Oribacterium_sinus"], col=rgb(1,0,0), breaks = 30)
+hist(taxa$JieZ_2017[ decision$JieZ_2017==0 ,"Oribacterium_sinus"], col=rgb(0,1,0,0.5))#add=TRUE, breaks=30)
+
+```
+
+##### Random forest and feature selection in repeated resampling
+
+Held out data from each run is then used for testing performance of the classifier:
+- area under ROC curve (AUC),
+- diagnostic odds ratio (OR)
+
+...are computed on each trial and the distribution and spread of each statistic is reported.
+
+First, do the heavy lifting : model training and feature selection, save intermediate results for later:
+
+```{r}
+ntry=30
+mdfs<-list()
+ut<-list()
+RF<-list()
+FS<-list()
+resample_IDX<-list()
+subsampleSize=0.9
+for (cohort in names(taxa))
+  FS[[cohort]]<-mdfs[[cohort]]<-ut[[cohort]]<-list()
+for (j in 1:ntry){
+  set.seed(j)
+  # construct ntry resamples, save them as indexes of samples to keep from each cohort
+  lapply(decision, function(taxa_cohort){
+    y1idx<- which(taxa_cohort==1 )
+    y0idx<- which(taxa_cohort==0 )
+    c(sample(y1idx, subsampleSize*length(y1idx),replace=FALSE),
+      sample(y0idx, subsampleSize*length(y0idx),replace=FALSE))
+  }
+  )-> B_idx
+  resample_IDX[[j]]=B_idx
+  RF_coh<-list()
+  for (cohort in names(taxa)){
+    MDFS_FS(taxa[[cohort]][B_idx[[cohort]], ], y = decision[[cohort]][B_idx[[cohort]] ], mc = 30)-> res_mdfs
+    U_test_FS(data=taxa[[cohort]][B_idx[[cohort]], ], decision = decision[[cohort]][B_idx[[cohort]] ])-> res_u
+    mdfs[[cohort]][[j]]<-res_mdfs
+    ut[[cohort]][[j]]<-res_u
+    FS[[cohort]][[j]]<- list()
+    for (mdv in names(res_mdfs)) FS[[cohort]][[j]][[mdv]]= res_mdfs[[mdv]]$rel_set
+    FS[[cohort]][[j]][["u_test"]]= res_u$rel_set
+    RF_models_file=sprintf("RF_models/%s_rep_%d_RF.rds",cohort,j)
+    if (!file.exists(RF_models_file)) {
+      set.seed(j)
+      message("computing RF...")
+      RF_models= list()
+      for (mdv in names(res_mdfs)){
+        if (length(res_mdfs[[mdv]]$relevant.variables))
+          RF_models[[mdv]]= randomForest(x=taxa[[cohort]][B_idx[[cohort]], FS[[cohort]][[j]][[mdv]] ,drop=FALSE  ],
+                                         y=as.factor( decision[[cohort]][B_idx[[cohort]] ])
+          )
+        message(mdv); gc()
+      }
+      if (length(res_u$relevant.variables))
+        RF_models[["u_test"]]=randomForest(x=taxa[[cohort]][B_idx[[cohort]], res_u$rel_set,drop=FALSE  ],
+                                           y=as.factor(decision[[cohort]][B_idx[[cohort]] ])
+        )
+      saveRDS(RF_models,RF_models_file); gc()
+    } else {
+      RF_models<-readRDS(RF_models_file)
+    }
+    RF_coh[[cohort]]<- RF_models
+  }
+  RF[[j]]=RF_coh
+  message(j)
+  
+}
+
+```
+
+
+Compute said statistics based on saved results:
+
+```{r}
+source("balanced_decision.R")
+COHORTS= names(taxa)
+temp<-lapply(RF[[1]], names)
+METHODS=temp[[which.max(sapply(temp,length)) ]] 
+METRICS=c("AUC","OR")
+odds_ratio<- function(y_pred, y, method, cohort){
+ # if(length(unique(y_pred))<2){
+    #print(sprintf("bad table %s %s",method, cohort));
+  #  return(1)}
+  stopifnot(length(unique(y))==2)
+  CM= matrix(nrow=2,ncol=2)
+  CM[1,1]=sum( (y_pred==0) & (y==0))
+  CM[2,1]=sum( (y_pred==1) & (y==0))
+  CM[1,2]=sum( (y_pred==0) & (y==1))
+  CM[2,2]=sum( (y_pred==1) & (y==1))
+  if (any(CM==0)) CM= CM + 1
+  (CM[2,2]*CM[1,1])/(CM[1,2]*CM[2,1])
+}
+performance=array(dim = c(length(COHORTS), length(METHODS),length(METRICS), length(RF)),
+                  dimnames = list(COHORTS,
+                                  METHODS,
+                                  METRICS,
+                                  NULL  #30 repeats
+                                  )
+                  )
+
+pred_thr= array(NA, dim= c(length(COHORTS), length(METHODS), length(RF)),
+                 dimnames = list(COHORTS,
+                                  METHODS,
+                                  NULL  #30 repeats
+                                  )
+)
+
+for (coh in COHORTS){
+for (j in seq_along(RF)){
+  for (method in METHODS){
+  RF[[j]][[coh]][[method]]-> RF_mcj
+    if (is.null(RF_mcj)){ 
+      
+      print(sprintf("null %s %s",coh,method))
+      performance[coh,method,"AUC",j]=0.5
+      performance[coh,method,"OR",j]=1
+    } else {
+   # print(sprintf("%d %s %s ok",j,method,coh) )
+    test_pred= predict(RF_mcj, newdata=  taxa[[coh]][ -resample_IDX[[j]][[coh]],
+                                                 FS[[coh]][[j]][[method]] ],type="prob"  )[,2]
+    y_thr= balanced.decision(x = RF_mcj$votes[,2], 
+                             y= decision[[coh]][ resample_IDX[[j]][[coh]] ])$threshold
+    pred_thr[coh,method,j]=y_thr
+    y_pbin<- (test_pred >= y_thr)
+    confusion=table(Predicted=y_pbin,Actual=decision[[coh]][-resample_IDX[[j]][[coh]] ])
+    performance[coh,method,"AUC",j]= auc(response=decision[[coh]][-resample_IDX[[j]][[coh]] ],
+                                        predictor=test_pred,quiet=TRUE)|> as.numeric() 
+    performance[coh,method,"OR",j]=  odds_ratio(y_pbin, decision[[coh]][-resample_IDX[[j]][[coh]] ],
+                                                method, coh)
+    
+    }
+  }
+  
+}
+}
+
+```
+
+
+```{r, fig.width = 5, fig.height = 6}
+par(mar = c(5, 13, 4, 1)) 
+#par(mfrow=c(1,2))
+do.call(rbind, lapply(names(decision),
+                      function(nm) { tab<-performance[nm,,"AUC",]
+                      rownames(tab)<-gsub("res_", "", rownames(tab))
+                                      rownames(tab)<-paste0(nm,"_",rownames(tab)); tab}
+                      ) )-> AUC_all
+do.call(rbind, lapply(names(decision),
+                      function(nm) {tab<-performance[nm,,"OR",]
+                      rownames(tab)<-gsub("res_", "", rownames(tab))
+                        rownames(tab)<-paste0(nm,"_",rownames(tab)); tab}
+                      ) )-> OR_all
+
+boxplot(t(AUC_all),las=2, horizontal=TRUE, main="classifier OOB AUC")
+temp<-t(OR_all)
+rownames(temp)<-NULL
+boxplot(temp[,1:5],las=2, horizontal=TRUE, main="classifier OOB OR",ylim=c(0,25))
+boxplot(temp[,6:10],las=2, horizontal=TRUE, main="classifier OOB OR",ylim=c(0,25))
+boxplot(temp[,11:15],las=2, horizontal=TRUE, main="classifier OOB OR")
+```
+
+
+##### Random forest and feature selection in repeated resampling 0.8
+
+Held out data from each run is then used for testing performance of the classifier:
+- area under ROC curve (AUC),
+- diagnostic odds ratio (OR)
+
+...are computed on each trial and the distribution and spread of each statistic is reported.
+
+First, do the heavy lifting : model training and feature selection, save intermediate results for later:
+
+```{r}
+ntry=30
+mdfs<-list()
+ut<-list()
+RF<-list()
+FS<-list()
+resample_IDX<-list()
+subsampleSize=0.8
+for (cohort in names(taxa))
+  FS[[cohort]]<-mdfs[[cohort]]<-ut[[cohort]]<-list()
+for (j in 1:ntry){
+  set.seed(j)
+  # construct ntry resamples, save them as indexes of samples to keep from each cohort
+  lapply(decision, function(taxa_cohort){
+    y1idx<- which(taxa_cohort==1 )
+    y0idx<- which(taxa_cohort==0 )
+    c(sample(y1idx, subsampleSize*length(y1idx),replace=FALSE),
+      sample(y0idx, subsampleSize*length(y0idx),replace=FALSE))
+  }
+  )-> B_idx
+  resample_IDX[[j]]=B_idx
+  RF_coh<-list()
+  for (cohort in names(taxa)){
+    MDFS_FS(taxa[[cohort]][B_idx[[cohort]], ], y = decision[[cohort]][B_idx[[cohort]] ], mc = 30)-> res_mdfs
+    U_test_FS(data=taxa[[cohort]][B_idx[[cohort]], ], decision = decision[[cohort]][B_idx[[cohort]] ])-> res_u
+    mdfs[[cohort]][[j]]<-res_mdfs
+    ut[[cohort]][[j]]<-res_u
+    FS[[cohort]][[j]]<- list()
+    for (mdv in names(res_mdfs)) FS[[cohort]][[j]][[mdv]]= res_mdfs[[mdv]]$rel_set
+    FS[[cohort]][[j]][["u_test"]]= res_u$rel_set
+    RF_models_file=sprintf("RF_models/%s_rep_%d_RF_%.2f.rds",cohort,j,subsampleSize)
+    if (!file.exists(RF_models_file)) {
+      set.seed(j)
+      message("computing RF...")
+      RF_models= list()
+      for (mdv in names(res_mdfs)){
+        if (length(res_mdfs[[mdv]]$relevant.variables))
+          RF_models[[mdv]]= randomForest(x=taxa[[cohort]][B_idx[[cohort]], FS[[cohort]][[j]][[mdv]] ,drop=FALSE  ],
+                                         y=as.factor( decision[[cohort]][B_idx[[cohort]] ])
+          )
+        message(mdv); gc()
+      }
+      if (length(res_u$relevant.variables))
+        RF_models[["u_test"]]=randomForest(x=taxa[[cohort]][B_idx[[cohort]], res_u$rel_set,drop=FALSE  ],
+                                           y=as.factor(decision[[cohort]][B_idx[[cohort]] ])
+        )
+      saveRDS(RF_models,RF_models_file); gc()
+    } else {
+      RF_models<-readRDS(RF_models_file)
+    }
+    RF_coh[[cohort]]<- RF_models
+  }
+  RF[[j]]=RF_coh
+  message(j)
+  
+}
+
+```
+
+
+Compute said statistics based on saved results:
+
+```{r}
+source("balanced_decision.R")
+COHORTS= names(taxa)
+temp<-lapply(RF[[1]], names)
+METHODS=temp[[which.max(sapply(temp,length)) ]] 
+METRICS=c("AUC","OR")
+odds_ratio<- function(y_pred, y, method, cohort){
+ # if(length(unique(y_pred))<2){
+    #print(sprintf("bad table %s %s",method, cohort));
+  #  return(1)}
+  stopifnot(length(unique(y))==2)
+  CM= matrix(nrow=2,ncol=2)
+  CM[1,1]=sum( (y_pred==0) & (y==0))
+  CM[2,1]=sum( (y_pred==1) & (y==0))
+  CM[1,2]=sum( (y_pred==0) & (y==1))
+  CM[2,2]=sum( (y_pred==1) & (y==1))
+  if (any(CM==0)) CM= CM + 1
+  (CM[2,2]*CM[1,1])/(CM[1,2]*CM[2,1])
+}
+performance=array(dim = c(length(COHORTS), length(METHODS),length(METRICS), length(RF)),
+                  dimnames = list(COHORTS,
+                                  METHODS,
+                                  METRICS,
+                                  NULL  #30 repeats
+                                  )
+                  )
+
+pred_thr= array(NA, dim= c(length(COHORTS), length(METHODS), length(RF)),
+                 dimnames = list(COHORTS,
+                                  METHODS,
+                                  NULL  #30 repeats
+                                  )
+)
+
+for (coh in COHORTS){
+for (j in seq_along(RF)){
+  for (method in METHODS){
+  RF[[j]][[coh]][[method]]-> RF_mcj
+    if (is.null(RF_mcj)){ 
+      
+      print(sprintf("null %s %s",coh,method))
+      performance[coh,method,"AUC",j]=0.5
+      performance[coh,method,"OR",j]=1
+    } else {
+   # print(sprintf("%d %s %s ok",j,method,coh) )
+   # print(dim(taxa[[coh]][ -resample_IDX[[j]][[coh]],
+  #                           FS[[coh]][[j]][[method]], drop=FALSE ]))
+    test_pred= predict(RF_mcj, newdata=  taxa[[coh]][ -resample_IDX[[j]][[coh]],
+                                                 FS[[coh]][[j]][[method]],
+                                                 drop=FALSE], type="prob"  )[,2]
+    y_thr= balanced.decision(x = RF_mcj$votes[,2], 
+                             y= decision[[coh]][ resample_IDX[[j]][[coh]] ])$threshold
+    pred_thr[coh,method,j]=y_thr
+    y_pbin<- (test_pred >= y_thr)
+    confusion=table(Predicted=y_pbin,Actual=decision[[coh]][-resample_IDX[[j]][[coh]] ])
+    performance[coh,method,"AUC",j]= auc(response=decision[[coh]][-resample_IDX[[j]][[coh]] ],
+                                        predictor=test_pred,quiet=TRUE)|> as.numeric() 
+    performance[coh,method,"OR",j]=  odds_ratio(y_pbin, decision[[coh]][-resample_IDX[[j]][[coh]] ],
+                                                method, coh)
+    
+    }
+  }
+  
+}
+}
+
+```
+
+
+```{r, fig.width = 5, fig.height = 6}
+par(mar = c(5, 13, 4, 1)) 
+#par(mfrow=c(1,2))
+do.call(rbind, lapply(names(decision),
+                      function(nm) { tab<-performance[nm,,"AUC",]
+                      rownames(tab)<-gsub("res_", "", rownames(tab))
+                                      rownames(tab)<-paste0(nm,"_",rownames(tab)); tab}
+                      ) )-> AUC_all
+do.call(rbind, lapply(names(decision),
+                      function(nm) {tab<-performance[nm,,"OR",]
+                      rownames(tab)<-gsub("res_", "", rownames(tab))
+                        rownames(tab)<-paste0(nm,"_",rownames(tab)); tab}
+                      ) )-> OR_all
+
+boxplot(t(AUC_all),las=2, horizontal=TRUE, main="classifier OOB AUC")
+temp<-t(OR_all)
+rownames(temp)<-NULL
+boxplot(temp[,1:5],las=2, horizontal=TRUE, main="classifier OOB OR",ylim=c(0,25))
+boxplot(temp[,6:10],las=2, horizontal=TRUE, main="classifier OOB OR",ylim=c(0,15))
+boxplot(temp[,11:15],las=2, horizontal=TRUE, main="classifier OOB OR")
+```
+
+
+##### Random forest and feature selection in repeated resampling 0.68
+
+Held out data from each run is then used for testing performance of the classifier:
+- area under ROC curve (AUC),
+- diagnostic odds ratio (OR)
+
+...are computed on each trial and the distribution and spread of each statistic is reported.
+
+First, do the heavy lifting : model training and feature selection, save intermediate results for later:
+
+```{r}
+ntry=30
+mdfs<-list()
+ut<-list()
+RF<-list()
+FS<-list()
+resample_IDX<-list()
+subsampleSize=0.68
+for (cohort in names(taxa))
+  FS[[cohort]]<-mdfs[[cohort]]<-ut[[cohort]]<-list()
+for (j in 1:ntry){
+  set.seed(j)
+  # construct ntry resamples, save them as indexes of samples to keep from each cohort
+  lapply(decision, function(taxa_cohort){
+    y1idx<- which(taxa_cohort==1 )
+    y0idx<- which(taxa_cohort==0 )
+    c(sample(y1idx, subsampleSize*length(y1idx),replace=FALSE),
+      sample(y0idx, subsampleSize*length(y0idx),replace=FALSE))
+  }
+  )-> B_idx
+  resample_IDX[[j]]=B_idx
+  RF_coh<-list()
+  for (cohort in names(taxa)){
+    MDFS_FS(taxa[[cohort]][B_idx[[cohort]], ], y = decision[[cohort]][B_idx[[cohort]] ], mc = 30)-> res_mdfs
+    U_test_FS(data=taxa[[cohort]][B_idx[[cohort]], ], decision = decision[[cohort]][B_idx[[cohort]] ])-> res_u
+    mdfs[[cohort]][[j]]<-res_mdfs
+    ut[[cohort]][[j]]<-res_u
+    FS[[cohort]][[j]]<- list()
+    for (mdv in names(res_mdfs)) FS[[cohort]][[j]][[mdv]]= res_mdfs[[mdv]]$rel_set
+    FS[[cohort]][[j]][["u_test"]]= res_u$rel_set
+    RF_models_file=sprintf("RF_models/%s_rep_%d_RF_%.2f.rds",cohort,j,subsampleSize)
+    if (!file.exists(RF_models_file)) {
+      set.seed(j)
+      message("computing RF...")
+      RF_models= list()
+      for (mdv in names(res_mdfs)){
+        if (length(res_mdfs[[mdv]]$relevant.variables))
+          RF_models[[mdv]]= randomForest(x=taxa[[cohort]][B_idx[[cohort]], FS[[cohort]][[j]][[mdv]] ,drop=FALSE  ],
+                                         y=as.factor( decision[[cohort]][B_idx[[cohort]] ])
+          )
+        message(mdv); gc()
+      }
+      if (length(res_u$relevant.variables))
+        RF_models[["u_test"]]=randomForest(x=taxa[[cohort]][B_idx[[cohort]], res_u$rel_set,drop=FALSE  ],
+                                           y=as.factor(decision[[cohort]][B_idx[[cohort]] ])
+        )
+      saveRDS(RF_models,RF_models_file); gc()
+    } else {
+      RF_models<-readRDS(RF_models_file)
+    }
+    RF_coh[[cohort]]<- RF_models
+  }
+  RF[[j]]=RF_coh
+  message(j)
+  
+}
+
+```
+
+
+Compute said statistics based on saved results:
+
+```{r}
+source("balanced_decision.R")
+COHORTS= names(taxa)
+temp<-lapply(RF[[1]], names)
+METHODS=temp[[which.max(sapply(temp,length)) ]] 
+METRICS=c("AUC","OR")
+odds_ratio<- function(y_pred, y, method, cohort){
+ # if(length(unique(y_pred))<2){
+    #print(sprintf("bad table %s %s",method, cohort));
+  #  return(1)}
+  stopifnot(length(unique(y))==2)
+  CM= matrix(nrow=2,ncol=2)
+  CM[1,1]=sum( (y_pred==0) & (y==0))
+  CM[2,1]=sum( (y_pred==1) & (y==0))
+  CM[1,2]=sum( (y_pred==0) & (y==1))
+  CM[2,2]=sum( (y_pred==1) & (y==1))
+  if (any(CM==0)) CM= CM + 1
+  (CM[2,2]*CM[1,1])/(CM[1,2]*CM[2,1])
+}
+performance=array(dim = c(length(COHORTS), length(METHODS),length(METRICS), length(RF)),
+                  dimnames = list(COHORTS,
+                                  METHODS,
+                                  METRICS,
+                                  NULL  #30 repeats
+                                  )
+                  )
+
+pred_thr= array(NA, dim= c(length(COHORTS), length(METHODS), length(RF)),
+                 dimnames = list(COHORTS,
+                                  METHODS,
+                                  NULL  #30 repeats
+                                  )
+)
+
+for (coh in COHORTS){
+for (j in seq_along(RF)){
+  for (method in METHODS){
+  RF[[j]][[coh]][[method]]-> RF_mcj
+    if (is.null(RF_mcj)){ 
+      
+      print(sprintf("null %s %s",coh,method))
+      performance[coh,method,"AUC",j]=0.5
+      performance[coh,method,"OR",j]=1
+    } else {
+   # print(sprintf("%d %s %s ok",j,method,coh) )
+    test_pred= predict(RF_mcj, newdata=  taxa[[coh]][ -resample_IDX[[j]][[coh]],
+                                                 FS[[coh]][[j]][[method]],
+                                                 drop=FALSE
+                                                 ],type="prob"  )[,2]
+    y_thr= balanced.decision(x = RF_mcj$votes[,2], 
+                             y= decision[[coh]][ resample_IDX[[j]][[coh]] ])$threshold
+    pred_thr[coh,method,j]=y_thr
+    y_pbin<- (test_pred >= y_thr)
+    confusion=table(Predicted=y_pbin,Actual=decision[[coh]][-resample_IDX[[j]][[coh]] ])
+    performance[coh,method,"AUC",j]= auc(response=decision[[coh]][-resample_IDX[[j]][[coh]] ],
+                                        predictor=test_pred,quiet=TRUE)|> as.numeric() 
+    performance[coh,method,"OR",j]=  odds_ratio(y_pbin, decision[[coh]][-resample_IDX[[j]][[coh]] ],
+                                                method, coh)
+    
+    }
+  }
+  
+}
+}
+
+```
+
+
+```{r, fig.width = 5, fig.height = 6}
+par(mar = c(5, 13, 4, 1)) 
+#par(mfrow=c(1,2))
+do.call(rbind, lapply(names(decision),
+                      function(nm) { tab<-performance[nm,,"AUC",]
+                      rownames(tab)<-gsub("res_", "", rownames(tab))
+                                      rownames(tab)<-paste0(nm,"_",rownames(tab)); tab}
+                      ) )-> AUC_all
+do.call(rbind, lapply(names(decision),
+                      function(nm) {tab<-performance[nm,,"OR",]
+                      rownames(tab)<-gsub("res_", "", rownames(tab))
+                        rownames(tab)<-paste0(nm,"_",rownames(tab)); tab}
+                      ) )-> OR_all
+
+boxplot(t(AUC_all),las=2, horizontal=TRUE, main="classifier OOB AUC")
+temp<-t(OR_all)
+rownames(temp)<-NULL
+boxplot(temp[,1:5],las=2, horizontal=TRUE, main="classifier OOB OR",ylim=c(0,25))
+boxplot(temp[,6:10],las=2, horizontal=TRUE, main="classifier OOB OR",ylim=c(0,10))
+boxplot(temp[,11:15],las=2, horizontal=TRUE, main="classifier OOB OR",ylim=c(0,7))
+```
+
+
+
+
+
+```{r}
+cbind(pred_thr["YachidaS_2019","res_1D0",], performance["YachidaS_2019","res_1D0","OR",])-> thr_OR
+
+ plot(thr_OR, xlab="thr", ylab="OR", main="RF performance on 1D0 feature set across 30 trials")
+```
+
+```{r}
+
+bad_trials<-(thr_OR[,1]<0.1)
+
+for ( i in which(bad_trials)){
+  X_train=taxa$YachidaS_2019[ resample_IDX[[i]]$YachidaS_2019, FS$YachidaS_2019[[i]]$res_1D0 ]
+   X_test=taxa$YachidaS_2019[ -resample_IDX[[i]]$YachidaS_2019, FS$YachidaS_2019[[i]]$res_1D0 ]
+   y_train=decision$YachidaS_2019[resample_IDX[[i]]$YachidaS_2019 ]
+   y_test= decision$YachidaS_2019[-resample_IDX[[i]]$YachidaS_2019 ]
+   rf_model_i<- RF[[i]]$YachidaS_2019$res_1D0
+   balanced.decision(x = predict(rf_model_i, newdata=X_train, type="prob")[,2],
+                     y= y_train)-> balanced_train_res
+   y_pred_test_prob= predict(rf_model_i, newdata= X_test,type="prob")[,2]
+   y_pred_test_dec= y_pred_test_prob >= balanced_train_res$threshold
+   print("_______________________")
+   print("_______________________")
+   print("balanced decision thr on train set:")
+   print(balanced_train_res$threshold)
+   print("confusion on test set using above thr:")
+   print(table(predicted=y_pred_test_dec, 
+               actual= y_test))
+   print(odds_ratio(y_pred_test_dec, 
+                    y_test))
+   y_pred_test_builtin= predict(rf_model_i, newdata= X_test)
+   print("results using builtin thr from RF: ")
+   print(table(predicted=y_pred_test_builtin, 
+               actual= y_test))
+   print(odds_ratio(y_pred_test_builtin, 
+                    y_test))
+   
+}
+
+```
+
+
+
+
+##### Consensus feature set
+
+As a final, high confidence result, we keep features that were found relevant at each repeat of the resampling procedure.
+
+
+```{r}
+
+consensus_features<-list()
+for (cohort in COHORTS){
+  consensus_features[[cohort]]<-list()
+  for (method in METHODS){
+  consensus_features[[cohort]][[method]]= FS[[cohort]][[1]][[method]]
+  for (j in 2:ntry)
+    consensus_features[[cohort]][[method]]= intersect(consensus_features[[cohort]][[method]],
+                                                      FS[[cohort]][[j]][[method]])
+  }
+}
+```
+
+```{r}
+
+for (cohort in names(consensus_features)){
+  names(consensus_features[[cohort]])->fs_names
+  grep("D",fs_names)->mdfs_mask
+  consensus_features[[cohort]][["any_mdfs"]]= Reduce(union,consensus_features[[cohort]][mdfs_mask] )
+  grep("2D",fs_names)->twoD_mask
+  grep("1D",fs_names)->oneD_mask
+  Reduce(union, consensus_features[[cohort]][oneD_mask])-> set_1D
+  Reduce(union, consensus_features[[cohort]][twoD_mask])-> set_2D
+  consensus_features[[cohort]][["only_2D"]]=setdiff(set_2D,set_1D)
+  print(cohort)
+  print(intersection_matrix(consensus_features[[cohort]][1:5] ))
+  print(intersection_matrix(consensus_features[[cohort]][5:7] ))
+}
+
+```
+
+##### Nogueira et al. (2018) FS stability:
+
+```{r}
+
+selection_indicator_matrix<-function(selection_list, all_features){
+  
+  Z<- matrix(nrow=length(selection_list),ncol=length(all_features))
+  for (i in seq_along(selection_list))
+    Z[i,]= all_features %in% selection_list[[i]]
+  Z
+}
+
+nogueira_stability<- function(selection_list, all_features){
+  Z<- selection_indicator_matrix(selection_list = selection_list,all_features = all_features)
+  p_f<- colMeans(Z)
+  mean(rowSums(Z))->k_
+  d=ncol(Z)
+  M=nrow(Z)
+  s2_f=(M/(M-1))*p_f*(1-p_f)
+  p_=k_/d
+  1- ( mean(s2_f)/(p_*(1 -p_ )) )
+}
+
+
+stability<-matrix(nrow=length(COHORTS), ncol=length(METHODS))
+rownames(stability)<- COHORTS
+colnames(stability)<- METHODS
+for (cohort in COHORTS){
+for (method in METHODS){
+  print(sprintf("%s %s",cohort, method))
+ lapply(1:ntry, function(j) FS[[cohort]][[j]][[method]])-> FS_list_cm
+  stability[cohort,method]=nogueira_stability(selection_list = FS_list_cm,
+                     all_features= colnames(taxa[[cohort]]))
+}
+}
+  
+ stability
+ 
+
+```
+
+
+```{r, fig.width=7,fig.height=7}
+par(mfrow=c(2,2))
+lapply(names(res_mdfs_base), function(coh){
+  
+  res_mdfs_base[[coh]]-> mdfs_res
+  res_u_base[[coh]]-> u_res
+  lapply(names(mdfs_res), function(mdv){
+    
+    print(sprintf("%s, mdfs: %s, original data n_rel=%d",coh,
+                  substr(mdv,5,8), length(mdfs_res[[mdv]]$rel_set)  ))
+    length(mdfs_res[[mdv]]$rel_set)-> n_orig
+    print("n_rel variability on bootstrap resampled data: ")
+    sapply(mdfs[[coh]], function(x) x[[mdv]]$rel_set |> length())-> n_bs
+    print(summary(n_bs))
+    list(variant= substr(mdv,5,8),
+         n_orig=n_orig,
+         n_bs=n_bs
+         )
+  })-> results_varaiants_mdfs
+  u_t_Results<- list(variant="u_test",
+  n_orig=u_res$rel_set |> length(),
+  n_bs= sapply(ut[[coh]], function(x) x$rel_set |> length()  ) )
+  fs_list<-c( list(u_t_Results), results_varaiants_mdfs)
+  do.call( cbind,
+    #c(list(u_t_Results$n_bs),
+    #lapply(results_varaiants_mdfs, 
+    #       function(x) x$n_bs
+    #       ))
+    lapply(fs_list, function(x) x$n_bs )
+    )-> n_bs_method
+  colnames(n_bs_method)<- sapply(fs_list, function(x) x$variant)
+  boxplot(n_bs_method,main=coh, ylim=c(-20,130))
+  points( 1:5, sapply(fs_list, function(x) x$n_orig ), pch=4, cex=3, col="red" )
+  text(1:5, sapply(fs_list, function(x) x$n_orig )-15, labels=sapply(fs_list, function(x) x$n_orig),
+                                                                    col='red' )
+  invisible()
+  
+})
+
+```
+
 
 ### Integrate two types of information and prepare data for base resampling procedure
 
@@ -228,797 +1300,29 @@ Function `draw_once_per_host` does following things:
 - filters out sparse taxa according to `min_minority_class_taxa`
 
 ```{r}
-source("subsample_nonrepeating_donors.R")
+source("draw_once_per_host2.R")
+library(matrixStats)
 host_id<- metadata$host.subject.id
 names(host_id)<- rownames(metadata)
-subsample<-list()
-n_repeats=500
-if (!file.exists("agp_subsamples.rds")){
-for (i in 1:n_repeats){
+base_resamples<-list()
+save(y,tdata,host_id,file="clean_data_before_resampling.RData")
+if (!file.exists("base_resamples.rds")){
+for (i in 1:30){
   set.seed(i)
-  subsample_donors(taxonomy=tdata, disease=y,
-                   host_id=host_id,
-                   subsampleSize = 0.8,
-                   print_summary = FALSE
-                   )-> subsample[[i]]
-if (i%% 50==0) message(sprintf("%d/500 done",i))
+draw_once_per_host(taxonomy=tdata, disease = y, host_id = host_id,
+                   min_minority_class_taxa =20, min_minority_class_dis = 30,print_summary = FALSE,
+                   report_progess = FALSE)->base_resamples[[i]]
+message(sprintf("%d/30 done",i))
 }
-  invisible()
-saveRDS(subsample, "agp_subsamples.rds") 
-} else {
-  subsample<-readRDS("agp_subsamples.rds")
+saveRDS(base_resamples, "base_resamples.rds") } else {
+  base_resamples<-readRDS("base_resamples.rds")
 }
 ```
 
 
 ## Feature selection
 
-### MDFS
-
 Perform discrete variant of MDFS in 1D and 2D mode on each of the prepared base resamples.
-
-whole procedure from discretization up to feature selection is encapsulated in one function `MDFS_FS`, that performs discrete version of MDFS in 2D and 1D on either of the binarization methods (by zero `0` or by median `m`). 
-Respective results are stored in the sublists:
-
-- `res_1D0`, `res_2D0`, `res_2Dm`, `res_1Dm`.
-
-Results include also a set of "synergistic partners" - taxa that were found to contribute to the information gain of other taxa relevant in 2D analysis, but not relevant by themselves.
-For practical pruposes, we limit this set by thresholding on increase of IG of the taxa the pure partners were found relevant with, as we go from 1D to 2D statistic. 
-Specifically, we report only those that had increased IG of their 2D relevant partners by at least the minimum value of 1D IG observed among the taxa relevant in 1D.
-
-### U-test
-
-Similar wrapper was prepared for Wilcoxon's test (`U_test_FS` function). Obviously, we do not have any 2D interactions here.
-
-### Resampling validation
-
-We validate the results of feature selection by multiple repeats (500) of leave x% out subsampling (jackknife). 
-For each of the subsampled datasets $\mathbf{X^*}, y^*$, where $\mathbf{X^*}$ are taxa abundances and $y^*$ is the disease status of interest, we perform U-test and MDFS based feature selection.
-The taxa from the selection procedure are then used to train the random forest classifiers, which are then evaluated on left out data (from this specific realisation of subsampling).
-
-For MDFS analysis, we compare 3 sets of features per repeat:
-
-- variables relevant in 1D only,
-- relevant in 2D and 1D,
-- relevant in 1D and 2D + synergistic partners.
-
-We say here that a feature is relevant if it was found by a test based on either of discretization methods, by median or by zero.
-
-Below code executes the validation for both of the procedures (takes around 6h to evaluate). 
-Detailed steps of MDFS pipeline implemented in `MDFS_FS()` function are described later, using one example repeat of the validation.
-
-
-```{r}
-subsample<- readRDS("agp_subsamples63.rds")
-n_repeats=30
-library(MDFS)
-source("FS_functions.R")
-features_file_string="features/agp_features_selected_lop=%.2f.rds"
-lop= 0.37 #leave out percentage
-library(randomForest)
-
-#if feature selection was not performed yet, set up the lists
-fs_fname=sprintf(features_file_string,lop)
-if (!file.exists(fs_fname)) {
-features<- list(md1D=list(),
-                md12D=list(),
-                md12Dp=list(),
-                u=list()
-                )
-
-} else { # otherwise load the saved result
-  features<-readRDS(fs_fname)
-}
-
-set.seed(123)
-seeds= sample.int(234234,n_repeats)
-
-fs_j_pattern="features/agp_fs_set_j=%d_lop=%.2f.rds"
- full_MDFSres<- full_Ures<-list()
-for (j in 1:n_repeats){
-  fs_j_fname= sprintf(fs_j_pattern,j,lop)
-  if(!file.exists(fs_j_fname)){
-    message(fs_j_fname)
-      set.seed(seeds[[j]])
-      MDFS_FS(X= tdata[ subsample[[j]]$keep, ], 
-              y= y[ subsample[[j]]$keep ], lvl=0.05, p.adjust.method = "holm",
-              seed= seeds[[j]],
-              mc=30 #minimum allowed class size of binarized taxa abundance
-              )-> all_mdfs_j
-      U_test_FS(X=tdata[ subsample[[j]]$keep, ],
-                y = y[ subsample[[j]]$keep ],
-                lvl = 0.05,
-                p.adjust.method = "holm")->u_j
-      fs_j=list(mdfs=all_mdfs_j, u=u_j)
-      saveRDS(fs_j, fs_j_fname)
-      } else {
-        fs_j=readRDS(fs_j_fname)
-        all_mdfs_j=fs_j$mdfs
-        u_j=fs_j$u
-  }
-  
-  full_MDFSres[[j]]=all_mdfs_j
-  full_Ures[[j]]=u_j
-  if (!file.exists(features_file_string)){
-            features$u[[j]]=u_j$rel_set
-            features$md1D[[j]]=union(all_mdfs_j$res_1Dm$rel_set, all_mdfs_j$res_1D0$rel_set)
-            features$md12D[[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$rel_set, 
-                                                  all_mdfs_j$res_2D0$rel_set,
-                                                  features$md1D[[j]]))
-            features$md12Dp[[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$partner_set, 
-                                                  all_mdfs_j$res_2D0$partner_set,
-                                                  features$md12D[[j]]))
-          }
-  model_file_string="RF_models/agp_j=%d_fs=%s_lop=%.2f.rds"
-  for (fs_method in c(names(features),"md12DpInt" )){
-    fname=sprintf(model_file_string,j,fs_method,lop)
-    if (!file.exists(fname)){
-        message(fname)
-        set.seed(seeds[[j]])
-      RF_fs_j=NA # set NA by default, immediately replaced by resulting model if
-                 # fs_method found anything
-      f_key<- if (fs_method=="md12DpInt") "md12Dp" else fs_method
-      if (length(features[[f_key]][[j]])) {
-      X_keep<-tdata[ subsample[[j]]$keep, ,
-                                      drop=FALSE
-                                      ]
-      X_keep_sel<- X_keep[, features[[f_key]][[j]], drop=FALSE]
-      X_rf<- X_keep_sel
-      if (fs_method=="md12DpInt")
-      {
-              #if any true synergies were found, interaction_data has length == 4
-              if (length(full_MDFSres[[j]]$res_2Dm$interaction_data)>1){
-                    interaction_xm<- generate_interaction_variables(X_keep, full_MDFSres[[j]]$res_2Dm$interaction_data)
-                    X_rf<- cbind(X_rf, interaction_xm)
-              } 
-                if (length(full_MDFSres[[j]]$res_2D0$interaction_data)>1) {
-                  interaction_x0<- generate_interaction_variables(X_keep, full_MDFSres[[j]]$res_2D0$interaction_data) 
-                  X_rf<- cbind(X_rf, interaction_x0)
-              } 
-      } 
-      
-      y_rf<-  y[   subsample[[j]]$keep ] |> as.factor() 
-      RF_fs_j= randomForest(x= X_rf,
-                            y= y_rf)
-      }
-      
-      saveRDS(RF_fs_j, file=fname)                      
-    }
-    
-    #RF_models[[fs_method]][[j]]=RF_fs_j
-  }
-  
-  message(sprintf("%d /%d done",j,n_repeats))
-  
-}
-
-```
-
-
-```{r}
-library(pROC)
-n_repeats=500
-n_repeats=30
-source("balanced_decision.R")
-METHODS=c(names(features),"md12DpInt")
-METRICS=c("AUC","OR")
-odds_ratio<- function(y_pred, y){
- # if(length(unique(y_pred))<2){
-    #print(sprintf("bad table %s %s",method, cohort));
-  #  return(1)}
-  stopifnot(length(unique(y))==2)
-  CM= matrix(nrow=2,ncol=2)
-  CM[1,1]=sum( (y_pred==0) & (y==0))
-  CM[2,1]=sum( (y_pred==1) & (y==0))
-  CM[1,2]=sum( (y_pred==0) & (y==1))
-  CM[2,2]=sum( (y_pred==1) & (y==1))
-  if (any(CM==0)) CM= CM + 1
-  (CM[2,2]*CM[1,1])/(CM[1,2]*CM[2,1])
-}
-if (!file.exists("performance_agp.rds")) {
-performance=array(dim = c(length(METHODS),length(METRICS), n_repeats),
-                  dimnames = list(
-                                  METHODS,
-                                  METRICS,
-                                  NULL  #500 repeats
-                                  )
-                  )
-
-pred_thr= array(NA, dim= c( length(METHODS),n_repeats),
-                 dimnames = list(
-                                  METHODS,
-                                  NULL  #500 repeats
-                                  )
-)
-
-for (j in 1:n_repeats){
-  for (method in METHODS){
-    fname=sprintf(model_file_string,j,method,lop)
-  RF_mj<- readRDS(fname)
-  no_features<- (length(RF_mj)==1)
-    if (no_features){ 
-      print(sprintf("null %s %s",method))
-      performance[method,"AUC",j]=0.5
-      performance[method,"OR",j]=1
-    } else {
-    f_key= if (method %in% names(features)) method else "md12Dp"
-    X_test<- tdata[ subsample[[j]]$leave, ,drop=FALSE]
-    X_rf<- X_test[, features[[f_key]][[j]], drop=FALSE ]
-    if (method=="md12DpInt"){
-      if (length(full_MDFSres[[j]]$res_2Dm$interaction_data)>1){
-                    interaction_xm<- generate_interaction_variables(X_test, full_MDFSres[[j]]$res_2Dm$interaction_data)
-                    X_rf<- cbind(X_rf, interaction_xm)
-              } 
-      if (length(full_MDFSres[[j]]$res_2D0$interaction_data)>1){
-                    interaction_x0<- generate_interaction_variables(X_test, full_MDFSres[[j]]$res_2D0$interaction_data)
-                    X_rf<- cbind(X_rf, interaction_x0)
-      } 
-    X_rf_ref<-X_rf
-    }
-    test_pred= predict(RF_mj, newdata=  X_rf,
-                      type="prob"  )[,2]
-    y_thr= balanced.decision(x = RF_mj$votes[,2], 
-                             y= y[   subsample[[j]]$keep ] )$threshold
-    pred_thr[method,j]=y_thr
-    y_pbin<- (test_pred >= y_thr)
-    confusion=table(Predicted=y_pbin,Actual= y[   subsample[[j]]$leave ] )
-    performance[method,"AUC",j]= auc(response=y[   subsample[[j]]$leave ],
-                                        predictor=test_pred,quiet=TRUE)|> as.numeric() 
-    performance[method,"OR",j]=  odds_ratio(y_pbin, y[   subsample[[j]]$leave ])
-    
-    }
-  }
-  j_= j-1
-  if (j_==0) message(paste0(rep("_",n_repeats %/% 10),collapse=""))
-  if ((j_>0) && (j_ %% 10 == 0)) cat("#")
-}
-
-} else {
-  performance<-readRDS("performance_agp.rds")
-}
-
-```
-
-```{r}
-
-#if (!file.exists("performance_agp.rds")) saveRDS(performance, "performance_agp.rds")
-
-
-```
-
-```{r}
-install.packages("reshape2")
-library(reshape2)
-long_perf <- melt(performance, 
-                  varnames = c("Method", "Metric", "Repeat"), value.name = "Value")
-
-
-```
-
-```{r}
-install.packages("dplyr")
-```
-```{r}
-install.packages("ggplot2")
-library(ggplot2)
-#library(dplyr)
-#summary_lines <- long_perf %>%
-#  group_by(Metric, Method) %>%
-#  summarise(
-#    median = median(Value),
-#    notch_lower = quantile(Value, 0.25) + 1.57 * IQR(Value) / sqrt(n()),
-#    notch_upper = quantile(Value, 0.75) - 1.57 * IQR(Value) / sqrt(n()),
-#    .groups = "drop"
-#  )
-
-
-# Violin plot to show distribution
-ggplot(long_perf, aes(x = Method, y = Value, fill = Method)) +
-  #geom_violin(trim = FALSE, alpha = 0.7) +
-  geom_boxplot(width = 0.3, color = "black", notch = TRUE) +
-   #geom_hline(data = summary_lines, aes(yintercept = median, color = Method), linetype = "solid") +
-
-  # Add dashed lines for notches
-#  geom_hline(data = summary_lines, aes(yintercept = notch_lower, color = Method), linetype = "dashed") +
- # geom_hline(data = summary_lines, aes(yintercept = notch_upper, color = Method), linetype = "dashed") +
-  facet_wrap(~ Metric, scales = "free_y") +  # Separate plots for AUC and OR
-  #theme_minimal() +
-  labs(title = sprintf("Performance Metric Distributions by Method, l.o.frac= %.2f",lop),
-       y = "Value", x = "Feature Selection Method") +
-  theme(legend.position = "none")
-```
-
-
-
-```{r}
-
-universe<- colnames(tdata)
-
-do.call(rbind,
-        lapply(features, function(method_repeats)
-            Reduce("+", lapply(method_repeats, function(one_repeat_of_a_method) 
-                                                    universe %in% one_repeat_of_a_method 
-                                                    ),
-                )
-            )
-        )-> feature_absence_presence
-
-colnames(feature_absence_presence)<-universe
-
-frequent_<- list(over95= .95*n_repeats, over90=.9*n_repeats)
-feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over95)] -> features_AP_filtered95
-feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over90)] -> features_AP_filtered90
-
-```
-
-```{r}
-viz_f90<- features_AP_filtered90
-colnames(viz_f90)<- sapply(strsplit(colnames(viz_f90),split="\\."), function(x) x[[length(x)]])
-viz_f90<-t(viz_f90) |> as.data.frame()
-viz_f90[ do.call(order, viz_f90),]
-```
-
-
-
-
-```{r}
-# mean IG = mean over all repeats
-# IG in repeat= max IG (median, zero)
-# partner in repeat= one with synergy
-#       if both zero and median are synergistic - arg max (IG)
-#overall partner - most frequent
-#only partners - overall partners but not in 1D or 2D relevant set 90% of times.
-plausible<- colnames(features_AP_filtered90)
-
-stopifnot(  #code below works if set of plausible taxons were all present in each of the
-            #subsamples (might dissapear due to filtering out of sparse columns)
-            #this condition catches this unlikely exception
-all(sapply(full_MDFSres, function(mdfs)
-              sapply(mdfs, function(x) 
-                  plausible %in% x$feature_names
-                )     
-))
-)
-rel_2D<-
-presence_mD<-presence_0D<-abundance_per_repD<-
-presence_mH<-presence_0H<-abundance_per_repH<-
-presence_m<-presence_0<-abundance_per_rep<-
-IG1D<-IG2D<- matrix(nrow=n_repeats, ncol=length(plausible))
-
-partners_m0<-partners_0<-partners_m<- matrix(0,nrow=length(plausible), ncol=ncol(tdata))
-
-for (j in c(1:n_repeats) ){
-  mdfs_j<- full_MDFSres[[j]]
-  for (k in seq_along(mdfs_j)) names(mdfs_j[[k]]$statistic)<- mdfs_j[[k]]$feature_names
-  
-  rel_2D[j,]= plausible %in% union(mdfs_j$res_2Dm$rel_set,
-                                   mdfs_j$res_2D0$rel_set
-                                   )
-  
-  plaus_IG1Dm<- mdfs_j$res_1Dm$statistic[plausible]
-  plaus_IG1D0<- mdfs_j$res_1D0$statistic[plausible]
-  plaus_IG2Dm<- mdfs_j$res_2Dm$statistic[plausible]
-  plaus_IG2D0<- mdfs_j$res_2D0$statistic[plausible]
-  IG1D[j,]<- pmax(plaus_IG1Dm,plaus_IG1D0)
-  mIG2D_bigger<- plaus_IG2Dm>plaus_IG2D0
-  IG2D[j,]<- pmax(plaus_IG2Dm,plaus_IG2D0)
-  
-  full_MDFSres[[1]]$res_2D0$partner_df[full_MDFSres[[1]]$res_2D0$partner_df$rel_name %in% plausible,]
-  pm0j<-pmj<-p0j<- matrix(nrow=length(plausible), ncol=ncol(tdata))
-  for (i_p in seq_along(plausible)){
-    pmj[i_p,]= colnames(tdata) %in%  mdfs_j$res_2Dm$partner_df[ mdfs_j$res_2Dm$partner_df$rel_name== plausible[[i_p]], ]$partner_name
-    p0j[i_p,]= colnames(tdata) %in%  mdfs_j$res_2D0$partner_df[ mdfs_j$res_2D0$partner_df$rel_name== plausible[[i_p]], ]$partner_name
-    pm0j[i_p,]= p0j[i_p,] | pmj[i_p,]
-  }
-  partners_0<- partners_0 + p0j
-  partners_m<- partners_m + pmj
-  partners_m0<- partners_m0 + pm0j
-  
-  #partners_0<- mdfs_j$res_2D0$partner_df
-  #partners_m<- mdfs_j$res_2Dm$partner_df
-  #partners_0<- partners_0[partners_0$synergy,]  #only those which are truly synergistic
-  #partners_m<- partners_m[partners_m$synergy,]
-  #rownames(partners_0)<-partners_0$rel_name     #to make it possible to select by rows
-  #rownames(partners_m)<-partners_m$rel_name     # see partner_j filling
-  #has_partner<- plausible %in% union(partners_0$rel_name, partners_m$rel_name)
-  #partner_j<- rep(NA, length(plausible))
-  #for each of the taxa that had a partner at j-th rep, 
-  #if median based IG was bigger, use partner from partners_m,otherwise from partners_0
-  #partner_j[has_partner]<- ifelse(mIG2D_bigger[has_partner], 
-  #                                partners_m[plausible[has_partner],]$partner_name,
-  #                                partners_0[plausible[has_partner],]$partner_name
-  #                                )
-  #partners_per_rep[j,]=partner_j
-  
-  #mean abundance & presence
-  
-  plausible_ab_at_j<-tdata[ subsample[[j]]$keep, plausible ]
-  presence_m_at_j<-binarize_taxa(as.matrix(plausible_ab_at_j), 
-                thresholds = colMedians(as.matrix(plausible_ab_at_j)) )
-  presence_0_at_j<-binarize_taxa(as.matrix(plausible_ab_at_j), 
-                thresholds = rep(0, ncol(plausible_ab_at_j))) 
-  abundance_per_rep[j,]= colMeans(plausible_ab_at_j)
-  presence_0[j,]=  colMeans(presence_0_at_j)
-  presence_m[j,]=  colMeans(presence_m_at_j)
-  abundance_per_repH[j,]=colMeans(plausible_ab_at_j[y[subsample[[j]]$keep]==0, ])
-  abundance_per_repD[j,]=colMeans(plausible_ab_at_j[y[subsample[[j]]$keep]==1, ])
-  presence_0H[j,]=colMeans(presence_0_at_j[y[subsample[[j]]$keep]==0, ])
-  presence_0D[j,]=colMeans(presence_0_at_j[y[subsample[[j]]$keep]==1, ])
-  presence_mH[j,]=colMeans(presence_m_at_j[y[subsample[[j]]$keep]==0, ])
-  presence_mD[j,]=colMeans(presence_m_at_j[y[subsample[[j]]$keep]==1, ])
-  if ((j-1) %%100==0) message(sprintf("%d/%d",j,n_repeats))
-}
-
-
-
-
-```
-
-```{r fig.width=7, fig.height=6}
-
-vpm0<- partners_m0
-colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(x)]])
-rownames(vpm0)<-sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
-vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
-vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
-vpm0<- vpm0[, colSums(vpm0)>0.3*n_repeats]
-
-vpm0_flat<-melt(vpm0)
-colnames(vpm0_flat)<-c("rel","partner","freq")
-ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
-
-```
-
-
-```{r fig.width=9, fig.height=6}
-
-vpm0<- partners_m0
-colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(x)]])
-rownames(vpm0)<-sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
-vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
-vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
-vpm0<- vpm0[, colMaxs(vpm0)>6]
-vpm0<- vpm0[rowMaxs(vpm0)>7 , ]
-vpm0_flat<-melt(vpm0)
-colnames(vpm0_flat)<-c("rel","partner","freq")
-ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))+
-    geom_text(aes(label = freq), color = "pink")
-
-```
-
-```
-
-
-```{r}
-colnames(partners_per_rep)<- plausible
-
-
-```
-
-```{r}
-
-fs_df<- data.frame(taxon=plausible,
-                        IG2D= colMeans(IG2D),
-                        IG2D_SD= colSds(IG2D),
-                        IG1D= colMeans(IG1D),
-                        IG1D_SD=colSds(IG1D),
-                        rel_1D= features_AP_filtered90["md1D",],
-                        rel_2D= colSums(rel_2D),
-                        rel_u=  features_AP_filtered90["u",]
-                        )
-
-viz_fs_df<- fs_df
-rownames(viz_fs_df)<-NULL
-viz_fs_df$taxon<-sapply(strsplit(fs_df$taxon,"\\."), function(x) x[[length(x)]])
-viz_fs_df[,2:5]<- round(viz_fs_df[,2:5],2)
-viz_fs_df[order(-viz_fs_df$IG2D) , ]
-```
-
-
-
-
-
-```{r}
-pab_df<- data.frame(taxon=plausible,
-                        ab= colMeans(abundance_per_rep),
-                        ab_SD= colSds(abundance_per_rep),
-                        abH= colMeans(abundance_per_repH),
-                        abH_SD= colSds(abundance_per_repH),
-                        abD= colMeans(abundance_per_repD),
-                        abD_SD= colSds(abundance_per_repD),
-                        pr=colMeans(presence_0),
-                        pr_SD=colSds(presence_0),
-                        prH=colMeans(presence_0H),
-                        prH_SD=colSds(presence_0H),
-                        prD=colMeans(presence_0D),
-                        prD_SD=colSds(presence_0D)
-                        )
-
-viz_pab_df<- pab_df
-rownames(viz_pab_df)<-NULL
-viz_pab_df$taxon<-sapply(strsplit(pab_df$taxon,"\\."), function(x) x[[length(x)]])
-viz_pab_df[, grep("ab",colnames(viz_pab_df))]<-10000*viz_pab_df[, grep("ab",colnames(viz_pab_df))]
-viz_pab_df[,2:ncol(viz_pab_df)]<- round(viz_pab_df[,2:ncol(viz_pab_df)],2)
-viz_pab_df[order(-viz_fs_df$IG2D) , ]
-
-```
-
-```{r}
-library(knitr)
-bacteria_only_2D<-fs_df$taxon[(fs_df$rel_2D>450)&(fs_df$rel_1D<450)]
-
-partners_only2D<- sapply(bacteria_only_2D,
-                         function(taxon)
-                           names(table(partners_per_rep[,taxon]))[[which.max(table(partners_per_rep[,taxon]))]]
-                           )
-partners_only2D_freq<- sapply(bacteria_only_2D,
-                         function(taxon)
-                           table(partners_per_rep[,taxon])[[which.max(table(partners_per_rep[,taxon]))]] |> unname()
-                           )
-
-# for (i in seq_along(bacteria_only_2D)){
-#   
-#   print(sapply(strsplit(c(bacteria_only_2D[[i]],
-#           partners_only2D[[i]]),split="\\."
-#           ), function(x) x[[length(x)]]))
-#   print(sprintf("partnering frequency: %d", partners_only2D_freq[[i]] ))
-#   print(
-#   table(
-#         rel=(taxonomy.mean.final[,bacteria_only_2D[[i]]]>0)*1,
-#         partner=(taxonomy.mean.final[,partners_only2D[[i]]]>0)*1,
-#         y=decision.mean.final
-#         )
-#   )
-#   
-# }
-
-for (i in seq_along(bacteria_only_2D)) {
-  
-  # Extract readable names
-  bacteria_name <- tail(strsplit(bacteria_only_2D[[i]], "\\.")[[1]], 1)
-  partner_name <- tail(strsplit(partners_only2D[[i]], "\\.")[[1]], 1)
-  
-  # Print header
-  cat("\n\n---\n")
-  cat(sprintf("### Pair %d: %s vs %s\n", i, bacteria_name, partner_name))
-  
-  # Print frequency
-  cat(sprintf("**Partnering frequency**: %d\n\n", partners_only2D_freq[[i]]))
-  
-  # Compute binary presence matrix
-  rel <- as.integer(taxonomy.mean.final[, bacteria_only_2D[[i]]] > 0)
-  partner <- as.integer(taxonomy.mean.final[, partners_only2D[[i]]] > 0)
- 
-  
-  # Tabulate
-  tab <- table(Rel = rel, Partner = partner, Class = decision.mean.final)
-  
-  print(cbind(tab[,,1], tab[,,2] ))
-  
-}
-```
-
-```{r}
-
-max(sapply(plausible,
-                         function(taxon)
-                           table(partners_per_rep[,taxon])[[which.max(table(taxon))]] |> unname()
-                           ))
-
-```
-
-
-
-```{r}
-
-viz_fs_df2<-viz_fs_df[,c("taxon","IG2D","IG1D","rel_1D","rel_2D")]
-viz_fs_df2$best_partner=sapply(plausible,
-                         function(taxon){ if (taxon %in% colnames(partners_per_rep))
-                           names(table(partners_per_rep[,taxon]))[[which.max(table(partners_per_rep[,taxon]))]]
-                           else "foo"
-                         }
-                    )
-
-viz_fs_df2$partnership_freq=sapply(plausible,
-                         function(taxon){ if (taxon %in% colnames(partners_per_rep))
-                           unname(table(partners_per_rep[,taxon])[[which.max(table(partners_per_rep[,taxon]))]])
-                           else "foo"
-                         }
-                    )
-fs_df2<- viz_fs_df2
-fs_df2$taxon<- fs_df$taxon
-viz_fs_df2$best_partner<- sapply( strsplit(viz_fs_df2$best_partner, split='\\.'), function(x) x[[length(x)]] )
-```
-
-```{r}
-
-viz_fs_df2
-
-```
-
-
-```{r}
-
-rel1D2D_strong_partnerships<-fs_df2[(fs_df2$rel_2D==500) &
-  (fs_df2$rel_1D==500) &
-  (fs_df2$partnership_freq>=250),] 
-
-short_taxon<-sapply( strsplit(rel1D2D_strong_partnerships$taxon, split='\\.'), function(x) x[[length(x)]] )
-short_partner<-sapply( strsplit(rel1D2D_strong_partnerships$best_partner, split='\\.'), function(x) x[[length(x)]] )
-
-for (i in 1:nrow(rel1D2D_strong_partnerships)){
-  rel1D2D_strong_partnerships$taxon
-  rel <- as.integer(taxonomy.mean.final[, rel1D2D_strong_partnerships$taxon[[i]]] > 0)
-  partner <- as.integer(taxonomy.mean.final[, rel1D2D_strong_partnerships$best_partner[[i]] ] > 0)
- 
-  # Print header
-  cat("\n\n---\n")
-  cat(sprintf("### Pair %d: %s vs %s\n", i, short_taxon[[i]], short_partner[[i]]))
-  
-  # Print frequency
-  cat(sprintf("**Partnering frequency**: %d\n\n", rel1D2D_strong_partnerships$partnership_freq[[i]]))
-  # Tabulate
-  tab <- table(Rel = rel, Partner = partner, Class = decision.mean.final)
-  print("y==0 | y==1")
-  print(cbind(tab[,,1], tab[,,2] ))
-}
-```
-
-
-```{r}
-
-n_vars <- ncol(partners_per_rep)  
-
-
-ppr<- partners_per_rep
-colnames(ppr)<-sapply(strsplit(colnames(partners_per_rep), "\\."),function(x) x[[length(x)]])
-for (j in 1:ncol(ppr)) ppr[,j]= c( ppr[,j][is.na(ppr[,j])], sort(ppr[,j][!is.na(ppr[,j])]))
-ppr<- as.data.frame(ppr)
-for (j in 1:ncol(ppr)) ppr[,j]<- as.factor(ppr[,j]) |> as.integer()
-ppr<- ppr[do.call(order, c(ppr, na.last=FALSE )),]
-ppr<- as.matrix(ppr)
-library(RColorBrewer)
-
-n_cols <- ncol(ppr)
-n_rows <- nrow(ppr)
-
-# Function to generate colors for each column based on unique non-NA values
-get_col_palette <- function(col_vals) {
-  unique_vals <- sort(unique(col_vals[!is.na(col_vals)]))
-  n_levels <- length(unique_vals)
-  
-  base_colors <- brewer.pal(min(max(n_levels, 3), 8), "Set1")
-  if (n_levels > length(base_colors)) {
-    base_colors <- rep(base_colors, length.out = n_levels)
-  }
-  
-  # Map unique_vals to consecutive indices: 1, 2, 3, ...
-  mapping <- setNames(seq_along(unique_vals), unique_vals)
-  
-  # Return list with color vector and mapping
-  list(
-    colors = base_colors,
-    mapping = mapping
-  )
-}
-
-# Create a color matrix matching ppr's entries (including NAs)
-color_mat <- matrix(NA, nrow = n_rows, ncol = n_cols)
-
-for (j in 1:n_cols) {
-  pal_list <- get_col_palette(ppr[, j])
-  pal_colors <- pal_list$colors
-  pal_map <- pal_list$mapping
-  
-  for (i in 1:n_rows) {
-    val <- ppr[i, j]
-    if (is.na(val)) {
-      color_mat[i, j] <- "grey"
-    } else {
-      # Use mapping to get index for color
-      idx <- pal_map[as.character(val)]
-      color_mat[i, j] <- pal_colors[idx]
-    }
-  }
-}
-
-
-
-# Plot with image()
-# image() expects numeric matrix, so we map colors to numbers
-# Create a vector of unique colors in color_mat for the palette
-
-all_colors <- unique(as.vector(color_mat))
-all_colors <- all_colors[!is.na(all_colors)]
-
-# Map colors to integers for image()
-color_indices <- matrix(match(color_mat, all_colors), nrow = n_rows, ncol = n_cols)
-
-# image() plots columns from left to right and rows from bottom to top,
-# so to have top rows at top, we flip rows
-
-par(mar = c(15, 4, 1, 2) + 0.1)  # increase bottom margin to 6 lines (default is 5.1)
-
-image(t(apply(color_indices, 2, rev)),
-      col = all_colors,
-      axes = FALSE,
-      xlab = NA,
-      ylab = "Trials",
-      main = "Distinct partners per variable in each repeat")
-
-# Add axis labels
-axis(1, at = seq(0,1,length.out = n_cols), labels = colnames(ppr), las=2)
-axis(2, at = seq(0,1,length.out = n_rows), labels =NA)
-box()
-```
-
-
-
-```{r}
-par(mar = c(5, 3, 2, 1))
-rocs<-list()
-model_file_string<-"RF_models/agp_j=%d_fs=%s_lop=%.2f.rds"
-set.seed(3423)
-r<- sample(1:n_repeats,1)
-for (method in c("u","md1D","md12D","md12Dp")){
-
-colormap<- c(u="purple",
-             "md1D"="green",
-             "md12D"="blue",
-             "md12Dp"="red"
-             )
-fname=sprintf(model_file_string,r,method,lop)
-RF_mr<- readRDS(fname)
-predict(RF_mr, newdata= tdata[ subsample[[r]]$leave, 
-                               features[[method]][[r]],
-                               drop=FALSE
-                               ], type="prob")[,2]->y_pred
-
-ROC<-roc(response=y[ subsample[[r]]$leave ], 
-         predictor=y_pred)
-rocs[[method]]=ROC
-if (method=="u")
-plot(ROC,
-     legacy.axes = TRUE,
-     xlim = c(1, 0),        # Desired limits
-     xaxs = "i",            # Prevent automatic padding
-     ylim = c(0, 1),        # Optional: force y-limits too
-     yaxs = "i",            # Prevent vertical padding
-     asp = NA,               # Avoid forced aspect ratio
-     col=colormap[[method]],
-      mar = c(5, 4, 2, 2)
-) else
-plot.roc(ROC, main=method, add=TRUE,, col=colormap[[method]], xlim=c(1,0),
-     legacy.axes=TRUE)
-}
-legend("bottomright",legend=c("u","md1D","md12D","md12Dp"),lwd=2,col=colormap
-)
-```
-
-```{r}
-lapply(rocs, auc)
-roc.test(rocs$md12Dp, rocs$u)
-roc.test(rocs$md12Dp, rocs$md1D)
-roc.test(rocs$md12Dp, rocs$md12D)
-```
-```{r}
-
-roc.test(rocs$md12Dp, rocs$md1D)
-
-
-```
-
-
-```{r}
-library(MDFS)
-source("FS_functions.R")
-MDFS_FS(X=tdata[subsample[[1]]$keep,], y=y[subsample[[1]]$keep ] )-> temp
-
-
-```
-
 
 ```{r}
 library(MDFS)
@@ -1241,6 +1545,7 @@ viz_rel2<- rel2D_partner_freq_df
 for (j in 1:2) viz_rel2[,j]<- sapply(viz_rel2[,j], get_deepest_taxonomy_lvl)
 
 ```
+
 
 
 #### Use mean IG to estabilish true synergies

@@ -177,12 +177,12 @@ fit_interactions<- function( partner_data_df, decision,bin_thresholds, bin_data)
 		colnames(inter_mat)<- c("r0p0","r1p0","r0p1","r1p1")
 		for (j in 1:nrow(res))
 		{
-			rj=bin_data[decision==1, res[j,"rel_name"] ]
-			pj=bin_data[decision==1, res[j,"partner_name"] ]
-			inter_mat[j,"r0p0"] = sum((rj==0)&(pj==0))
-			inter_mat[j,"r1p0"] = sum((rj==1)&(pj==0))
-			inter_mat[j,"r0p1"] = sum((rj==0)&(pj==1))
-			inter_mat[j,"r1p1"] = sum((rj==1)&(pj==1))
+			rj=bin_data[, res[j,"rel_name"] ]
+			pj=bin_data[, res[j,"partner_name"] ]
+			inter_mat[j,"r0p0"] = sum((rj==0)&(pj==0)&(decision==1))/sum((rj==0)&(pj==0))
+			inter_mat[j,"r1p0"] = sum((rj==1)&(pj==0)&(decision==1))/sum((rj==1)&(pj==0))
+			inter_mat[j,"r0p1"] = sum((rj==0)&(pj==1)&(decision==1))/sum((rj==0)&(pj==1))
+			inter_mat[j,"r1p1"] = sum((rj==1)&(pj==1)&(decision==1))/sum((rj==1)&(pj==1))
 			inter_mat[j,]= rank(inter_mat[j,],ties.method="first")
 		}
 		inter_mat<- as.data.frame(inter_mat)
