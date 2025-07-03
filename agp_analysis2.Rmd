@@ -290,7 +290,7 @@ Detailed steps of MDFS pipeline implemented in `MDFS_FS()` function are describe
 
 ```{r}
 subsample<- readRDS("agp_subsamples63.rds")
-n_repeats=30
+n_repeats=500
 library(MDFS)
 source("FS_functions.R")
 features_file_string="features/agp_features_selected_lop=%.2f.rds"
@@ -398,7 +398,7 @@ for (j in 1:n_repeats){
 ```{r}
 library(pROC)
 n_repeats=500
-n_repeats=30
+#n_repeats=30
 source("balanced_decision.R")
 METHODS=c(names(features),"md12DpInt")
 METRICS=c("AUC","OR")
@@ -481,7 +481,7 @@ for (j in 1:n_repeats){
 
 ```{r}
 
-#if (!file.exists("performance_agp.rds")) saveRDS(performance, "performance_agp.rds")
+if (!file.exists("performance_agp.rds")) saveRDS(performance, "performance_agp.rds")
 
 
 ```
@@ -496,7 +496,7 @@ long_perf <- melt(performance,
 ```
 
 ```{r}
-install.packages("dplyr")
+#install.packages("dplyr")
 ```
 ```{r}
 install.packages("ggplot2")
@@ -661,7 +661,7 @@ colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(
 rownames(vpm0)<-sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
 vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
 vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
-vpm0<- vpm0[, colSums(vpm0)>0.3*n_repeats]
+vpm0<- vpm0[, colSums(vpm0)>100]
 
 vpm0_flat<-melt(vpm0)
 colnames(vpm0_flat)<-c("rel","partner","freq")
@@ -678,8 +678,8 @@ colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(
 rownames(vpm0)<-sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
 vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
 vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
-vpm0<- vpm0[, colMaxs(vpm0)>6]
-vpm0<- vpm0[rowMaxs(vpm0)>7 , ]
+vpm0<- vpm0[, colMaxs(vpm0)>300]
+vpm0<- vpm0[rowMaxs(vpm0)>200 , ]
 vpm0_flat<-melt(vpm0)
 colnames(vpm0_flat)<-c("rel","partner","freq")
 ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
@@ -688,14 +688,6 @@ ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
 
 ```
 
-```
-
-
-```{r}
-colnames(partners_per_rep)<- plausible
-
-
-```
 
 ```{r}
 
@@ -744,68 +736,9 @@ viz_pab_df[,2:ncol(viz_pab_df)]<- round(viz_pab_df[,2:ncol(viz_pab_df)],2)
 viz_pab_df[order(-viz_fs_df$IG2D) , ]
 
 ```
-
-```{r}
-library(knitr)
-bacteria_only_2D<-fs_df$taxon[(fs_df$rel_2D>450)&(fs_df$rel_1D<450)]
-
-partners_only2D<- sapply(bacteria_only_2D,
-                         function(taxon)
-                           names(table(partners_per_rep[,taxon]))[[which.max(table(partners_per_rep[,taxon]))]]
-                           )
-partners_only2D_freq<- sapply(bacteria_only_2D,
-                         function(taxon)
-                           table(partners_per_rep[,taxon])[[which.max(table(partners_per_rep[,taxon]))]] |> unname()
-                           )
-
-# for (i in seq_along(bacteria_only_2D)){
-#   
-#   print(sapply(strsplit(c(bacteria_only_2D[[i]],
-#           partners_only2D[[i]]),split="\\."
-#           ), function(x) x[[length(x)]]))
-#   print(sprintf("partnering frequency: %d", partners_only2D_freq[[i]] ))
-#   print(
-#   table(
-#         rel=(taxonomy.mean.final[,bacteria_only_2D[[i]]]>0)*1,
-#         partner=(taxonomy.mean.final[,partners_only2D[[i]]]>0)*1,
-#         y=decision.mean.final
-#         )
-#   )
-#   
-# }
-
-for (i in seq_along(bacteria_only_2D)) {
-  
-  # Extract readable names
-  bacteria_name <- tail(strsplit(bacteria_only_2D[[i]], "\\.")[[1]], 1)
-  partner_name <- tail(strsplit(partners_only2D[[i]], "\\.")[[1]], 1)
-  
-  # Print header
-  cat("\n\n---\n")
-  cat(sprintf("### Pair %d: %s vs %s\n", i, bacteria_name, partner_name))
-  
-  # Print frequency
-  cat(sprintf("**Partnering frequency**: %d\n\n", partners_only2D_freq[[i]]))
-  
-  # Compute binary presence matrix
-  rel <- as.integer(taxonomy.mean.final[, bacteria_only_2D[[i]]] > 0)
-  partner <- as.integer(taxonomy.mean.final[, partners_only2D[[i]]] > 0)
- 
-  
-  # Tabulate
-  tab <- table(Rel = rel, Partner = partner, Class = decision.mean.final)
-  
-  print(cbind(tab[,,1], tab[,,2] ))
-  
-}
-```
-
 ```{r}
 
-max(sapply(plausible,
-                         function(taxon)
-                           table(partners_per_rep[,taxon])[[which.max(table(taxon))]] |> unname()
-                           ))
+max(partners_m0)
 
 ```
 
