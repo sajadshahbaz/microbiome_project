@@ -199,6 +199,25 @@ We set this threshold to the minimum IG obtained for relevant variables in 1D.
 Function `generate_interaction_variables()`, enumerates 4 states in each interaction, according to the increasing probablity of `y==1`. 
 Thus, based on `interaction_data`, it can create an array of additional, discrete, ordinal features.
 
+
+#### Base result - on the whole datasets
+
+
+```{r}
+
+MDFS_global<- lapply(names(taxa), function(coh)
+  
+          MDFS_FS(X= taxa[[coh]], y = decision[[coh]], lvl = 0.05, p.adjust.method = "holm", seed = 123,mc = 30)
+  )
+
+U_global<- lapply(names(taxa), function(coh)
+  
+  U_test_FS(X = taxa[[coh]], y = decision[[coh]], lvl=0.05, p.adjust.method = "holm")
+  )
+
+```
+
+
 #### Subsampling sets preparation
 
 
@@ -237,7 +256,7 @@ source("FS_functions.R")
 lop=0.37
 library(randomForest)
 set.seed(123)
-n_repeats=30
+n_repeats=500
 lapply(cohort_ids, function(._) sample.int(452332,n_repeats))-> seeds
 names(seeds)<-cohort_ids
 
@@ -346,7 +365,7 @@ message(sprintf( "%d / %d done", j, n_repeats))
 
 library(pROC)
 n_repeats=500
-n_repeats=30
+#n_repeats=30
 source("balanced_decision.R")
 METHODS=c(names(features),"md12DpInt")
 METRICS=c("AUC","OR")
@@ -390,7 +409,7 @@ for (j in 1:n_repeats){
   RF_mj<- readRDS(fname)
   no_features<- (length(RF_mj)==1)
     if (no_features){ 
-      print(sprintf("null %s %s",coh,method))
+    #  print(sprintf("null %s %s",coh,method))
       performance[coh,method,"AUC",j]=0.5
       performance[coh,method,"OR",j]=1
     } else {
@@ -421,10 +440,11 @@ for (j in 1:n_repeats){
     
     }
   }
+  
+  }
   j_= j-1
   if (j_==0) message(paste0(rep("_",n_repeats %/% 10),collapse=""))
   if ((j_>0) && (j_ %% 10 == 0)) cat("#")
-  }
 }
 
 } else {
@@ -437,6 +457,13 @@ for (j in 1:n_repeats){
 
 ```{r}
 
+saveRDS(performance, "performance_additional.rds")
+
+```
+
+
+```{r}
+
 library(reshape2)
 long_perf <- melt(performance, 
                   varnames = c("Cohort", "Method", "Metric", "Repeat"), value.name = "Value")
@@ -445,7 +472,7 @@ long_perf <- melt(performance,
 ```
 
 
-```{r}
+```{r, fig.height=6, fig.width=8}
 library(ggplot2)
 #library(dplyr)
 #summary_lines <- long_perf %>%
@@ -460,7 +487,13 @@ library(ggplot2)
 
 # Violin plot to show distribution
 long_perf<- long_perf[long_perf$Method!="md12DpInt",]
-ggplot(long_perf, aes(x = Method, y = Value, fill = Method)) +
+ggplot(long_perf[(!(
+                  (long_perf$Metric=="OR") &
+                   (long_perf$Value>19)
+                    ))
+                   , ]
+       
+       , aes(x = Method, y = Value, fill = Method)) +
   #geom_violin(trim = FALSE, alpha = 0.7) +
   geom_boxplot(width = 0.3, color = "black", notch = TRUE) +
    #geom_hline(data = summary_lines, aes(yintercept = median, color = Method), linetype = "solid") +
@@ -482,7 +515,7 @@ ggplot(long_perf, aes(x = Method, y = Value, fill = Method)) +
 
 universe<- colnames(taxa[[1]])
 
-features_AP_95<- list()
+features_AP_90<- list()
 frequent_<- list(over95= .95*n_repeats, over90=.9*n_repeats)
 
 for (coh in cohort_ids){
@@ -491,26 +524,39 @@ features, function(method) Reduce("+", lapply(method[[coh]], function(x) univers
 
 colnames(feature_absence_presence)<-universe
 
-feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over90)] -> features_AP_90[[coh]]
+feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over90), drop=FALSE] -> features_AP_90[[coh]]
 }
 
 ```
 
 
+
 ```{r}
 
+(features_AP_90$JieZ_2017 |> colnames()) %in% Reduce(union,lapply(MDFS_global[[1]], function(x) x$rel_set))
+(features_AP_90$MetaCardis_2020_a |> colnames()) %in% Reduce(union,lapply(MDFS_global[[2]], function(x) x$rel_set))
+
+(features_AP_90$YachidaS_2019 |> colnames()) %in% Reduce(union,lapply(MDFS_global[[3]], function(x) x$rel_set))
+
+
+```
+
+
+```{r}
+print(cohort_ids[[1]])
 features_AP_90$JieZ_2017 |> t()
+print(cohort_ids[[2]])
 features_AP_90$MetaCardis_2020_a |> t()
+print(cohort_ids[[3]])
 features_AP_90$YachidaS_2019|> t()
 ```
 
 
 ```{r}
 
-#hist(taxa$JieZ_2017[ decision$JieZ_2017==1 ,"Oribacterium_sinus"], col=rgb(1,0,0), breaks = 30)
-hist(taxa$JieZ_2017[ decision$JieZ_2017==0 ,"Oribacterium_sinus"], col=rgb(0,1,0,0.5))#add=TRUE, breaks=30)
 
 ```
+
 
 ##### Random forest and feature selection in repeated resampling
 

@@ -217,6 +217,19 @@ fisher.test(rbind(table(meta.mean.final[decision.mean.final==0,5]),
 
 ```
 
+###Median dataset MDFS for reference
+
+```{r}
+library(MDFS)
+source("FS_functions.R")
+global_MDFS<-MDFS_FS(X= taxonomy.mean.final,
+        y= decision.mean.final,lvl = 0.05,seed = 123,mc=30  )
+global_U<- U_test_FS(X=taxonomy.mean.final, y=decision.mean.final, lvl=0.05)
+
+
+```
+
+
 ## Base resamples construction
 
 Function `draw_once_per_host` does following things:
@@ -691,11 +704,25 @@ ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
 
 ```{r}
 
+jackknife_SE<- function(replicates,N,D,R=NULL){
+  if (is.null(R)) R= N/D
+  mean_rep= mean(replicates)
+  sqrt((R/length(replicates))*sum((replicates-mean_rep)^2))
+}
+
+```
+
+
+```{r}
+for (v in names(global_MDFS))
+  names(global_MDFS[[v]]$statistic)<- global_MDFS[[v]]$feature_names
 fs_df<- data.frame(taxon=plausible,
-                        IG2D= colMeans(IG2D),
-                        IG2D_SD= colSds(IG2D),
-                        IG1D= colMeans(IG1D),
-                        IG1D_SD=colSds(IG1D),
+                        IG2D= pmax(global_MDFS$res_2Dm$statistic[ plausible  ],
+                                   global_MDFS$res_2D0$statistic[ plausible  ]),
+                        IG2D_SD= apply(IG2D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
+                        IG1D= pmax(global_MDFS$res_1Dm$statistic[ plausible  ],
+                                   global_MDFS$res_1D0$statistic[ plausible  ]),
+                        IG1D_SD=apply(IG1D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final)),
                         rel_1D= features_AP_filtered90["md1D",],
                         rel_2D= colSums(rel_2D),
                         rel_u=  features_AP_filtered90["u",]
@@ -708,24 +735,26 @@ viz_fs_df[,2:5]<- round(viz_fs_df[,2:5],2)
 viz_fs_df[order(-viz_fs_df$IG2D) , ]
 ```
 
-
-
-
-
 ```{r}
+taxonomy.mean.final<- taxonomy.mean.final/10000
 pab_df<- data.frame(taxon=plausible,
-                        ab= colMeans(abundance_per_rep),
-                        ab_SD= colSds(abundance_per_rep),
-                        abH= colMeans(abundance_per_repH),
-                        abH_SD= colSds(abundance_per_repH),
-                        abD= colMeans(abundance_per_repD),
-                        abD_SD= colSds(abundance_per_repD),
+                        ab= colMeans(taxonomy.mean.final[,plausible]),
+                        ab_SD= apply(abundance_per_rep,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37* nrow(taxonomy.mean.final) ),
+                        abH= colMeans(taxonomy.mean.final[ decision.mean.final==0 ,plausible]),
+                        abH_SD= apply(abundance_per_repH,2,jackknife_SE, sum(decision.mean.final==0), 
+                                      0.37*sum(decision.mean.final==0)),
+                        abD= colMeans(taxonomy.mean.final[ decision.mean.final==1 ,plausible]),
+                        abD_SD= apply(abundance_per_repH,2,jackknife_SE, sum(decision.mean.final==1), 
+                                      0.37*sum(decision.mean.final==1)),
                         pr=colMeans(presence_0),
-                        pr_SD=colSds(presence_0),
+                        pr_SD=apply(presence_0,2, jackknife_SE, nrow(taxonomy.mean.final),
+                                    0.37*nrow(taxonomy.mean.final)),
                         prH=colMeans(presence_0H),
-                        prH_SD=colSds(presence_0H),
+                        prH_SD=apply(presence_0H,2,jackknife_SE, sum(decision.mean.final==0), 
+                                      0.37*sum(decision.mean.final==0)),
                         prD=colMeans(presence_0D),
-                        prD_SD=colSds(presence_0D)
+                        prD_SD=apply(presence_0D,2,jackknife_SE, sum(decision.mean.final==1), 
+                                      0.37*sum(decision.mean.final==1))
                         )
 
 viz_pab_df<- pab_df
@@ -736,6 +765,15 @@ viz_pab_df[,2:ncol(viz_pab_df)]<- round(viz_pab_df[,2:ncol(viz_pab_df)],2)
 viz_pab_df[order(-viz_fs_df$IG2D) , ]
 
 ```
+
+```{r}
+write.csv(
+cbind( viz_fs_df[order(-viz_fs_df$IG2D),],
+       viz_pab_df[order(-viz_fs_df$IG2D) , 2:ncol(viz_pab_df) ]),
+file="agp_data_per_taxa.csv")
+
+```
+
 ```{r}
 
 max(partners_m0)
