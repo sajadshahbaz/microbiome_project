@@ -1,0 +1,942 @@
+---
+title: "Information Theory and Machine Learning Reveal Synergistic Interactions in
+  Gut Microbiota Related to Food Allergy - data analysis pipeline"
+output:
+  html_document:
+    toc: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Initial data preparation
+
+Read the raw taxonomy abundance info and metadata from delimiter separated files.
+
+```{r read}
+metadata.filename <- "metadata.csv"
+taxa.filename <- "taxa.tsv"
+tdata <- as.data.frame(t(read.delim(taxa.filename, header = TRUE, sep = "\t")))
+colnames(tdata) <- tdata[1,]
+tdata <- tdata[-1,]
+
+metadata<-read.csv(metadata.filename, header = TRUE, sep = ",")
+rownames(metadata)<-metadata[,1]
+metadata<-metadata[,-1]
+
+```
+
+## Filtering of erroneus data
+
+
+```{r}
+library(magrittr)
+c("sex","height.cm","weight.kg","age.years")-> confounding_factors
+confounding_factors %in% colnames(metadata)
+metadata$sex[!(metadata$sex %in% c("male","female"))]<- NA
+metadata$height[metadata$height.cm<38]<-NA
+metadata$weight[metadata$weight.kg<1]<-NA
+metadata$age_years[metadata$age.years<=0]<-NA
+metadata$height[metadata$height.cm>220]<-NA
+metadata$weight[metadata$weight.kg<=1]<-NA
+metadata$weight[metadata$weight.kg>200]<-NA
+to_remove_mask <- (metadata[,confounding_factors] %>% is.na() %>% rowSums()) > 0
+metadata<-metadata[!to_remove_mask, ]
+```
+
+### Taxa table preparation 
+
+#### Bacteria selection and stool samples filtering
+
+```{r}
+#1. skip non bacterial taxa
+tdata<- tdata[, grep('sk__Bacteria', colnames(tdata)) ]
+print("inital number of taxa samples")
+print(nrow(tdata))
+#2. keep stool samples
+metadata$env_material-> sample_source
+feces_rownames<- rownames(metadata)[ sample_source=="feces" ]
+tdata<-tdata[ intersect(rownames(tdata),feces_rownames),] 
+print("number of taxa samples from stool")
+print(nrow(tdata))
+```
+
+#### Alpha diversity analysis and normalization
+
+Normalize abundancies and use proportions to calculate 3 versions of alpha diversity indexes. Below plots show values of alpha diversity as a function of the rank of cumulative count of each sample.
+Investigation suggests a common cutoff point, which corresponds to minimum cumulative count of `3636`.
+
+```{r}
+  t_rownames<- rownames(tdata)
+  tdata<- lapply(tdata, as.numeric) %>% as.data.frame()
+  rownames(tdata)<- t_rownames
+  lib_sizes<- rowSums(tdata) 
+  t_props<-( tdata
+            )/lib_sizes #due to R recycling, each row gets divided by its sum
+  shannon_div<- -rowSums((t_props+1e-10)*log(t_props+1e-10))
+  simpson_index<- rowSums ( 1 - t_props^2  )
+  inverse_simp<- 1/rowSums( t_props^2 )
+  size_order<-order(lib_sizes)
+
+  taxa_min_lib_size= 3636 
+  crit_rank= which.min(abs(lib_sizes[size_order] - taxa_min_lib_size))
+
+  plot(shannon_div[size_order],type='l')
+  abline(v = crit_rank, col="red",lwd=2) 
+  plot(simpson_index[size_order],type='l')
+  abline(v = crit_rank, col="red",lwd=2) 
+  plot(inverse_simp[size_order],type='l')
+  abline(v = crit_rank, col="red",lwd=2) 
+
+
+  tdata<- tdata[ rowSums(tdata) >= taxa_min_lib_size, ]
+  tdata<- tdata/rowSums(tdata)
+```
+
+### Integrate two types of information and prepare data for base resampling procedure
+
+
+```{r}
+common_names<- intersect(rownames(metadata), rownames(tdata))
+tdata<- tdata[common_names,]
+metadata<-metadata[common_names,]
+print("# of samples left after filtering by alpha diversity (with repeating donors)")
+print(length(common_names))
+print("# of unique donors")
+print(length(unique(metadata$host.subject.id)))
+```
+
+## Median dataset and cohort summary
+
+
+```{r}
+y<- 1- metadata$allergic.to.i.have.no.food.allergies.that.i.know.of 
+names(y)<- rownames(metadata)
+library(matrixStats)
+
+ids<-metadata$host.subject.id
+names(ids)<-rownames(metadata)
+
+donors<-unique(ids)
+
+taxonomy.mean<-matrix(NA,length(donors),ncol(tdata))
+rownames(taxonomy.mean)<-donors
+colnames(taxonomy.mean)<-colnames(tdata)
+meta.mean<-as.data.frame(matrix(NA,length(donors),6))
+rownames(meta.mean)<-donors
+colnames(meta.mean)<-c('age','sex','weight.kg','height.cm','BMI_cat','age_cat')
+decision.mean<-numeric(length(donors))
+names(decision.mean)<-donors
+
+if (!file.exists("mean_data.RData")){
+for (i in 1:length(donors)) {
+ donor<-donors[i]
+ samples<-names(ids)[ids==donor]
+ 
+ #decision
+ decs<-y[samples]
+ decision.mean[i]<-floor(median(decs))
+ 
+ #taxa
+ taxa<-tdata[samples,,drop=F]
+ taxonomy.mean[i,]<-colMedians(as.matrix(taxa))
+ 
+ #metadata
+ #age
+ ages<-metadata[samples,'age.years']
+ ages<-ages[!is.na(ages)]
+ if (length(ages)>0) meta.mean[i,1]<-round(median(ages))
+ #sex
+ sexes<-metadata[samples,'sex']
+ sexes<-sexes[!is.na(sexes)]
+ if (length(sexes)>0) meta.mean[i,2]<-names(table(sexes))[which.max(table(sexes))]
+ #weight
+ weights<-as.numeric(metadata[samples,'weight.kg'])
+ weights<-weights[!is.na(weights)]
+ if (length(weights)>0) meta.mean[i,3]<-median(weights)
+ #height
+ heights<-as.numeric(metadata[samples,'height.cm'])
+ heights<-heights[!is.na(heights)]
+ if (length(heights)>0) meta.mean[i,4]<-median(heights)
+ 
+ 
+ if(!((i-1)%%500)) print(sprintf("median data computation... %d / %d done",i, length(donors)))
+}
+
+mask.meta<-rowSums(is.na(meta.mean[,1:4]))==0
+
+meta.mean.final<-meta.mean[mask.meta,]
+meta.mean.final[meta.mean.final[1]<15,6]<-'0-14'
+meta.mean.final[meta.mean.final[1]>=15 & meta.mean.final[1]<64,6]<-'15-64'
+meta.mean.final[meta.mean.final[1]>=64,6]<-'65+'
+bmi<-meta.mean.final[,'weight.kg']/meta.mean.final[,'height.cm']^2*10000
+meta.mean.final[bmi<18.5,5]<-'Underweight'
+meta.mean.final[bmi>=18.5 & bmi<25,5]<-'Normal'
+meta.mean.final[bmi>=25 & bmi<30,5]<-'Overweight'
+meta.mean.final[bmi>=30,5]<-'Obese'
+
+
+decision.mean.final<-decision.mean[mask.meta]
+taxonomy.mean.final<-taxonomy.mean[mask.meta,]
+taxonomy.mean.final<-taxonomy.mean.final[,colSums(taxonomy.mean.final>0)>20]
+taxonomy.mean.final<-as.data.frame(taxonomy.mean.final/rowSums(taxonomy.mean.final)*10000)
+
+binary.mean.final<-taxonomy.mean.final*0
+for (i in 1:ncol(binary.mean.final)) binary.mean.final[,i]<-taxonomy.mean.final[,i]>median(taxonomy.mean.final[,i])
+
+save(meta.mean.final,decision.mean.final,taxonomy.mean.final,binary.mean.final,file='mean_data.RData')
+} else {load("mean_data.RData")}
+
+
+#Table 1 
+table(decision.mean.final)
+
+table(meta.mean.final[decision.mean.final==0,2])
+table(meta.mean.final[decision.mean.final==1,2])
+
+fisher.test(rbind(table(meta.mean.final[decision.mean.final==0,2]),
+            table(meta.mean.final[decision.mean.final==1,2])))
+            
+
+table(meta.mean.final[decision.mean.final==0,6])
+table(meta.mean.final[decision.mean.final==1,6])
+
+fisher.test(rbind(table(meta.mean.final[decision.mean.final==0,6]),
+                  table(meta.mean.final[decision.mean.final==1,6])))#,simulate.p.value = T)
+
+
+table(meta.mean.final[decision.mean.final==0,5])
+table(meta.mean.final[decision.mean.final==1,5])
+
+fisher.test(rbind(table(meta.mean.final[decision.mean.final==0,5]),
+                  table(meta.mean.final[decision.mean.final==1,5])))
+
+
+
+```
+
+###Median dataset MDFS for reference
+
+```{r}
+library(MDFS)
+source("FS_functions.R")
+global_MDFS<-MDFS_FS(X= taxonomy.mean.final,
+        y= decision.mean.final,lvl = 0.05,seed = 123,mc=30  )
+global_U<- U_test_FS(X=taxonomy.mean.final, y=decision.mean.final, lvl=0.05)
+
+
+```
+
+
+## Base resamples construction
+
+Function `draw_once_per_host` does following things:
+
+- draws one sample from each unique donor which has submitted more than one sample
+
+- binarizes taxa by their median value, setting values bigger than median to 1
+
+- filters out sparse taxa according to `min_minority_class_taxa`
+
+```{r}
+source("subsample_nonrepeating_donors.R")
+host_id<- metadata$host.subject.id
+names(host_id)<- rownames(metadata)
+subsample<-list()
+n_repeats=500
+if (!file.exists("agp_subsamples.rds")){
+for (i in 1:n_repeats){
+  set.seed(i)
+  subsample_donors(taxonomy=tdata, disease=y,
+                   host_id=host_id,
+                   subsampleSize = 0.8,
+                   print_summary = FALSE
+                   )-> subsample[[i]]
+if (i%% 50==0) message(sprintf("%d/500 done",i))
+}
+  invisible()
+saveRDS(subsample, "agp_subsamples.rds") 
+} else {
+  subsample<-readRDS("agp_subsamples.rds")
+}
+```
+
+
+## Feature selection
+
+### MDFS
+
+Perform discrete variant of MDFS in 1D and 2D mode on each of the prepared base resamples.
+
+whole procedure from discretization up to feature selection is encapsulated in one function `MDFS_FS`, that performs discrete version of MDFS in 2D and 1D on either of the binarization methods (by zero `0` or by median `m`). 
+Respective results are stored in the sublists:
+
+- `res_1D0`, `res_2D0`, `res_2Dm`, `res_1Dm`.
+
+Results include also a set of "synergistic partners" - taxa that were found to contribute to the information gain of other taxa relevant in 2D analysis, but not relevant by themselves.
+For practical pruposes, we limit this set by thresholding on increase of IG of the taxa the pure partners were found relevant with, as we go from 1D to 2D statistic. 
+Specifically, we report only those that had increased IG of their 2D relevant partners by at least the minimum value of 1D IG observed among the taxa relevant in 1D.
+
+### U-test
+
+Similar wrapper was prepared for Wilcoxon's test (`U_test_FS` function). Obviously, we do not have any 2D interactions here.
+
+### Resampling validation
+
+We validate the results of feature selection by multiple repeats (500) of leave x% out subsampling (jackknife). 
+For each of the subsampled datasets $\mathbf{X^*}, y^*$, where $\mathbf{X^*}$ are taxa abundances and $y^*$ is the disease status of interest, we perform U-test and MDFS based feature selection.
+The taxa from the selection procedure are then used to train the random forest classifiers, which are then evaluated on left out data (from this specific realisation of subsampling).
+
+For MDFS analysis, we compare 3 sets of features per repeat:
+
+- variables relevant in 1D only,
+- relevant in 2D and 1D,
+- relevant in 1D and 2D + synergistic partners.
+
+We say here that a feature is relevant if it was found by a test based on either of discretization methods, by median or by zero.
+
+Below code executes the validation for both of the procedures (takes around 6h to evaluate). 
+Detailed steps of MDFS pipeline implemented in `MDFS_FS()` function are described later, using one example repeat of the validation.
+
+
+```{r}
+subsample<- readRDS("agp_subsamples63.rds")
+n_repeats=500
+library(MDFS)
+source("FS_functions.R")
+features_file_string="features/agp_features_selected_lop=%.2f.rds"
+lop= 0.37 #leave out percentage
+library(randomForest)
+
+#if feature selection was not performed yet, set up the lists
+fs_fname=sprintf(features_file_string,lop)
+if (!file.exists(fs_fname)) {
+features<- list(md1D=list(),
+                md12D=list(),
+                md12Dp=list(),
+                u=list()
+                )
+
+} else { # otherwise load the saved result
+  features<-readRDS(fs_fname)
+}
+
+set.seed(123)
+seeds= sample.int(234234,n_repeats)
+
+fs_j_pattern="features/agp_fs_set_j=%d_lop=%.2f.rds"
+ full_MDFSres<- full_Ures<-list()
+for (j in 1:n_repeats){
+  fs_j_fname= sprintf(fs_j_pattern,j,lop)
+  if(!file.exists(fs_j_fname)){
+    message(fs_j_fname)
+      set.seed(seeds[[j]])
+      MDFS_FS(X= tdata[ subsample[[j]]$keep, ], 
+              y= y[ subsample[[j]]$keep ], lvl=0.05, p.adjust.method = "holm",
+              seed= seeds[[j]],
+              mc=30 #minimum allowed class size of binarized taxa abundance
+              )-> all_mdfs_j
+      U_test_FS(X=tdata[ subsample[[j]]$keep, ],
+                y = y[ subsample[[j]]$keep ],
+                lvl = 0.05,
+                p.adjust.method = "holm")->u_j
+      fs_j=list(mdfs=all_mdfs_j, u=u_j)
+      saveRDS(fs_j, fs_j_fname)
+      } else {
+        fs_j=readRDS(fs_j_fname)
+        all_mdfs_j=fs_j$mdfs
+        u_j=fs_j$u
+  }
+  
+  full_MDFSres[[j]]=all_mdfs_j
+  full_Ures[[j]]=u_j
+  if (!file.exists(features_file_string)){
+            features$u[[j]]=u_j$rel_set
+            features$md1D[[j]]=union(all_mdfs_j$res_1Dm$rel_set, all_mdfs_j$res_1D0$rel_set)
+            features$md12D[[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$rel_set, 
+                                                  all_mdfs_j$res_2D0$rel_set,
+                                                  features$md1D[[j]]))
+            features$md12Dp[[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$partner_set, 
+                                                  all_mdfs_j$res_2D0$partner_set,
+                                                  features$md12D[[j]]))
+          }
+  model_file_string="RF_models/agp_j=%d_fs=%s_lop=%.2f.rds"
+  for (fs_method in c(names(features),"md12DpInt" )){
+    fname=sprintf(model_file_string,j,fs_method,lop)
+    if (!file.exists(fname)){
+        message(fname)
+        set.seed(seeds[[j]])
+      RF_fs_j=NA # set NA by default, immediately replaced by resulting model if
+                 # fs_method found anything
+      f_key<- if (fs_method=="md12DpInt") "md12Dp" else fs_method
+      if (length(features[[f_key]][[j]])) {
+      X_keep<-tdata[ subsample[[j]]$keep, ,
+                                      drop=FALSE
+                                      ]
+      X_keep_sel<- X_keep[, features[[f_key]][[j]], drop=FALSE]
+      X_rf<- X_keep_sel
+      if (fs_method=="md12DpInt")
+      {
+              #if any true synergies were found, interaction_data has length == 4
+              if (length(full_MDFSres[[j]]$res_2Dm$interaction_data)>1){
+                    interaction_xm<- generate_interaction_variables(X_keep, full_MDFSres[[j]]$res_2Dm$interaction_data)
+                    X_rf<- cbind(X_rf, interaction_xm)
+              } 
+                if (length(full_MDFSres[[j]]$res_2D0$interaction_data)>1) {
+                  interaction_x0<- generate_interaction_variables(X_keep, full_MDFSres[[j]]$res_2D0$interaction_data) 
+                  X_rf<- cbind(X_rf, interaction_x0)
+              } 
+      } 
+      
+      y_rf<-  y[   subsample[[j]]$keep ] |> as.factor() 
+      RF_fs_j= randomForest(x= X_rf,
+                            y= y_rf)
+      }
+      
+      saveRDS(RF_fs_j, file=fname)                      
+    }
+    
+    #RF_models[[fs_method]][[j]]=RF_fs_j
+  }
+  
+  message(sprintf("%d /%d done",j,n_repeats))
+  
+}
+
+```
+
+
+```{r}
+library(pROC)
+n_repeats=500
+#n_repeats=30
+source("balanced_decision.R")
+METHODS=c(names(features),"md12DpInt")
+METRICS=c("AUC","OR")
+odds_ratio<- function(y_pred, y){
+ # if(length(unique(y_pred))<2){
+    #print(sprintf("bad table %s %s",method, cohort));
+  #  return(1)}
+  stopifnot(length(unique(y))==2)
+  CM= matrix(nrow=2,ncol=2)
+  CM[1,1]=sum( (y_pred==0) & (y==0))
+  CM[2,1]=sum( (y_pred==1) & (y==0))
+  CM[1,2]=sum( (y_pred==0) & (y==1))
+  CM[2,2]=sum( (y_pred==1) & (y==1))
+  if (any(CM==0)) CM= CM + 1
+  (CM[2,2]*CM[1,1])/(CM[1,2]*CM[2,1])
+}
+if (!file.exists("performance_agp.rds")) {
+performance=array(dim = c(length(METHODS),length(METRICS), n_repeats),
+                  dimnames = list(
+                                  METHODS,
+                                  METRICS,
+                                  NULL  #500 repeats
+                                  )
+                  )
+
+pred_thr= array(NA, dim= c( length(METHODS),n_repeats),
+                 dimnames = list(
+                                  METHODS,
+                                  NULL  #500 repeats
+                                  )
+)
+
+for (j in 1:n_repeats){
+  for (method in METHODS){
+    fname=sprintf(model_file_string,j,method,lop)
+  RF_mj<- readRDS(fname)
+  no_features<- (length(RF_mj)==1)
+    if (no_features){ 
+      print(sprintf("null %s %s",method))
+      performance[method,"AUC",j]=0.5
+      performance[method,"OR",j]=1
+    } else {
+    f_key= if (method %in% names(features)) method else "md12Dp"
+    X_test<- tdata[ subsample[[j]]$leave, ,drop=FALSE]
+    X_rf<- X_test[, features[[f_key]][[j]], drop=FALSE ]
+    if (method=="md12DpInt"){
+      if (length(full_MDFSres[[j]]$res_2Dm$interaction_data)>1){
+                    interaction_xm<- generate_interaction_variables(X_test, full_MDFSres[[j]]$res_2Dm$interaction_data)
+                    X_rf<- cbind(X_rf, interaction_xm)
+              } 
+      if (length(full_MDFSres[[j]]$res_2D0$interaction_data)>1){
+                    interaction_x0<- generate_interaction_variables(X_test, full_MDFSres[[j]]$res_2D0$interaction_data)
+                    X_rf<- cbind(X_rf, interaction_x0)
+      } 
+    X_rf_ref<-X_rf
+    }
+    test_pred= predict(RF_mj, newdata=  X_rf,
+                      type="prob"  )[,2]
+    y_thr= balanced.decision(x = RF_mj$votes[,2], 
+                             y= y[   subsample[[j]]$keep ] )$threshold
+    pred_thr[method,j]=y_thr
+    y_pbin<- (test_pred >= y_thr)
+    confusion=table(Predicted=y_pbin,Actual= y[   subsample[[j]]$leave ] )
+    performance[method,"AUC",j]= auc(response=y[   subsample[[j]]$leave ],
+                                        predictor=test_pred,quiet=TRUE)|> as.numeric() 
+    performance[method,"OR",j]=  odds_ratio(y_pbin, y[   subsample[[j]]$leave ])
+    
+    }
+  }
+  j_= j-1
+  if (j_==0) message(paste0(rep("_",n_repeats %/% 10),collapse=""))
+  if ((j_>0) && (j_ %% 10 == 0)) cat("#")
+}
+
+} else {
+  performance<-readRDS("performance_agp.rds")
+}
+
+```
+
+##### One randomly selected repetition
+
+```{r}
+set.seed(644545)
+r=sample.int(n_repeats,size = 1)
+print(r)
+METHODxROC=list()
+AUCxROC=list()
+CONFxMETHOD=list()
+ORxMETHOD=list()
+for (METHOD in METHODS[1:4]){
+fname=sprintf(model_file_string,r,METHOD,lop)
+RF_mdl<- readRDS(fname)
+no_features<- (length(RF_mdl)==1)
+stopifnot(!no_features)
+    f_key= if (METHOD %in% names(features)) METHOD else "md12Dp"
+    X_test<- tdata[ subsample[[r]]$leave, ,drop=FALSE]
+    X_rf<- X_test[, features[[f_key]][[r]], drop=FALSE ]
+    test_pred= predict(RF_mdl, newdata=  X_rf,
+                      type="prob"  )[,2]
+    y_thr= balanced.decision(x = RF_mdl$votes[,2],
+                             y= y[   subsample[[r]]$keep ] )$threshold
+    y_pbin<- (test_pred >= y_thr)
+    CONFxMETHOD[[METHOD]]==table(Predicted=as.numeric(y_pbin),Actual= y[   subsample[[r]]$leave ] )
+    ORxMETHOD[[METHOD]]=odds_ratio(y_pred = y_pbin,y = y[ subsample[[r]]$leave])
+    roc_curve=roc(response=y[   subsample[[r]]$leave ],
+        predictor=test_pred,quiet=TRUE)
+METHODxROC[[METHOD]]= roc_curve
+AUCxROC[[METHOD]]= auc(roc_curve)
+}
+names(METHODxROC)<- c("MDFS-1D","MDFS-2D", "MDFS-2D + partners", "U-test")
+
+for (i_nm in seq_along(names(METHODxROC)))
+  for (i_nm2 in seq_along(names(METHODxROC)))
+    if (i_nm<i_nm2) { nm<- names(METHODxROC)[[i_nm]]; nm2<- names(METHODxROC)[[i_nm2]] 
+      print(sprintf("%s vs %s", nm,nm2))
+    print(roc.test(METHODxROC[[nm]], METHODxROC[[nm2]]))
+    }
+names(METHODxROC)<- sapply(seq_along(METHODxROC),
+                           function(m)
+                             sprintf("%s, AUC=%.2f",
+                                     names(METHODxROC)[[m]],
+                                     AUCxROC[[m]]))
+         
+#pdf("roc_curve_v2.pdf", width=8,height=5)
+library(ggplot2)
+ggroc(METHODxROC, legacy.axes = T,aes=c("color"),lwd=0.75) +
+geom_abline(slope = 1 ,intercept = 0, linetype="dashed") + # add identity line
+theme(
+panel.background = element_blank(),
+axis.title.x = element_text(size =18, face = 'bold'),
+axis.title.y = element_text(size =18, face = 'bold'),
+panel.border = element_rect(size = 2, fill = NA),
+axis.text.x = element_text(size = 14, face ='bold'),
+axis.text.y = element_text(size = 14, face ='bold')) +
+xlab('100% - Specificity') +
+ylab('Sensitivity') +
+scale_x_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
+scale_y_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
+  ggtitle("Feature Selection + RF: ROC comparison") +# theme(legend.position = "left")
+  scale_color_discrete(name = "FS method") +
+   guides(color = guide_legend(override.aes = list(lwd = 5)))
+#dev.off()
+```
+
+
+###### Synthetic variables test (chinese paper (doesnt work))
+
+```{r}
+pairs<-rbind(
+cbind(full_MDFSres[[r]]$res_2Dm$interaction_data$rel_name,
+full_MDFSres[[r]]$res_2Dm$interaction_data$partner_name),
+cbind(full_MDFSres[[r]]$res_2D0$interaction_data$rel_name,
+full_MDFSres[[r]]$res_2D0$interaction_data$partner_name))
+METHOD="md12pInt"
+    f_key= if (METHOD %in% names(features)) METHOD else "md12Dp"
+    X_test<- tdata[ subsample[[r]]$leave, ,drop=FALSE]
+    X_train<- tdata[ subsample[[r]]$keep, ,drop=FALSE]
+    X_rf_train<- X_train[, features[[f_key]][[r]], drop=FALSE ]
+    X_rf_test<- X_test[, features[[f_key]][[r]], drop=FALSE ]
+synthetic_variables<- function(data, pairs, pairwise_fun){
+ apply(pairs,1,function(ROW) pairwise_fun(rank(data[, ROW[[1]] ]), rank(data[, ROW[[2]] ])),
+       simplify=FALSE) |> as.data.frame()
+}
+S_trainPlus<-synthetic_variables(X_rf_train, pairs,function(x,y) x+y)
+S_trainDiff<-synthetic_variables(X_rf_train, pairs,function(x,y) x-y)
+S_trainProd<-synthetic_variables(X_rf_train, pairs,function(x,y) x*y)
+S_trainSgn<-synthetic_variables(X_rf_train, pairs,function(x,y)  x>y)
+S_trainAbs<-synthetic_variables(X_rf_train, pairs,function(x,y)  abs(x-y))
+X_rf_trainPlus<- cbind(X_rf_train,S_trainPlus)
+X_rf_trainDiff<- cbind(X_rf_train,S_trainDiff)
+X_rf_trainProd<- cbind(X_rf_train,S_trainProd)
+X_rf_trainSgn<- cbind(X_rf_train,S_trainSgn)
+X_rf_trainAbs<- cbind(X_rf_train,S_trainAbs)
+X_rf_trainAll<- cbind(X_rf_train, S_trainPlus,
+                      S_trainDiff,
+                      S_trainProd,
+                      S_trainSgn,
+                      S_trainAbs)
+message("rfs...")
+rf_plus<- randomForest(x= X_rf_trainPlus,
+                       y= y[ subsample[[r]]$keep ] |> as.factor() )
+cat("x")
+rf_diff<- randomForest(x= X_rf_trainDiff,
+                       y= y[ subsample[[r]]$keep ] |> as.factor() )
+cat("x")
+rf_prod<- randomForest(x= X_rf_trainProd,
+                       y= y[ subsample[[r]]$keep ] |> as.factor() )
+cat("x")
+rf_sgn<- randomForest(x= X_rf_trainSgn,
+                       y= y[ subsample[[r]]$keep ] |> as.factor())
+cat("x")
+rf_abs<- randomForest(x= X_rf_trainAbs,
+                       y= y[ subsample[[r]]$keep ] |> as.factor())
+cat("x")
+rf_all<- randomForest(x= X_rf_trainAll,
+                       y= y[ subsample[[r]]$keep ] |> as.factor())
+cat("x")
+
+```
+
+
+```{r}
+
+auc_from_rf<- function(rf,y_train){
+ as.numeric( auc(response=y_train, predictor= rf$votes[,2]))
+}
+
+print(auc_from_rf(rf=rf_plus, y_train = y[ subsample[[r]]$keep ] ))
+print(auc_from_rf(rf=rf_diff, y_train = y[ subsample[[r]]$keep ] ))
+print(auc_from_rf(rf=rf_prod, y_train = y[ subsample[[r]]$keep ] ))
+print(auc_from_rf(rf=rf_sgn, y_train = y[ subsample[[r]]$keep ] ))
+print(auc_from_rf(rf=rf_abs, y_train = y[ subsample[[r]]$keep ] ))
+print(auc_from_rf(rf=rf_all, y_train = y[ subsample[[r]]$keep ] ))
+
+```
+
+
+###### Aggregate performance calculation and visualization
+
+
+```{r}
+
+if (!file.exists("performance_agp.rds")) saveRDS(performance, "performance_agp.rds")
+
+
+```
+
+```{r}
+install.packages("reshape2")
+library(reshape2)
+long_perf <- melt(performance, 
+                  varnames = c("Method", "Metric", "Repeat"), value.name = "Value")
+
+
+```
+
+```{r}
+#install.packages("dplyr")
+```
+```{r}
+#install.packages("ggplot2")
+library(ggplot2)
+#library(dplyr)
+#summary_lines <- long_perf %>%
+#  group_by(Metric, Method) %>%
+#  summarise(
+#    median = median(Value),
+#    notch_lower = quantile(Value, 0.25) + 1.57 * IQR(Value) / sqrt(n()),
+#    notch_upper = quantile(Value, 0.75) - 1.57 * IQR(Value) / sqrt(n()),
+#    .groups = "drop"
+#  )
+levels(long_perf$Method) <- c("MDFS-1D", "MDFS-2D", "MDFS-2D + partners", "U-test", "md12DpInt")
+
+# Violin plot to show distribution
+ggplot(long_perf[long_perf$Method!="md12DpInt",], aes(x = Method, y = Value, fill = Method)) +
+  #geom_violin(trim = FALSE, alpha = 0.7) +
+  geom_boxplot(width = 0.3, color = "black", notch = TRUE) +
+   #geom_hline(data = summary_lines, aes(yintercept = median, color = Method), linetype = "solid") +
+
+  # Add dashed lines for notches
+#  geom_hline(data = summary_lines, aes(yintercept = notch_lower, color = Method), linetype = "dashed") +
+ # geom_hline(data = summary_lines, aes(yintercept = notch_upper, color = Method), linetype = "dashed") +
+  facet_wrap(~ Metric, scales = "free_y") +  # Separate plots for AUC and OR
+  #theme_minimal() +
+  labs(title = sprintf("Performance Metric Distributions by Method, l.o.frac= %.2f",lop),
+       y = "Value", x = "Feature Selection Method") + theme_minimal()+
+  theme(legend.position = "right", axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
+###### Selection & partnership frequency calculation and visualization
+
+
+```{r}
+
+universe<- colnames(tdata)
+
+do.call(rbind,
+        lapply(features, function(method_repeats)
+            Reduce("+", lapply(method_repeats, function(one_repeat_of_a_method) 
+                                                    universe %in% one_repeat_of_a_method 
+                                                    ),
+                )
+            )
+        )-> feature_absence_presence
+
+colnames(feature_absence_presence)<-universe
+
+frequent_<- list(over95= .95*n_repeats, over90=.9*n_repeats)
+feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over95)] -> features_AP_filtered95
+feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over90)] -> features_AP_filtered90
+
+```
+
+```{r}
+viz_f90<- features_AP_filtered90
+colnames(viz_f90)<- sapply(strsplit(colnames(viz_f90),split="\\."), function(x) x[[length(x)]])
+viz_f90<-t(viz_f90) |> as.data.frame()
+viz_f90[ do.call(order, viz_f90),]
+```
+
+
+
+
+```{r}
+# mean IG = mean over all repeats
+# IG in repeat= max IG (median-discretized, zero-discretized)
+# partner in repeat= one with synergy
+#       if both zero and median are synergistic - arg max (IG)
+#overall partner - most frequent
+#only partners - overall partners but not in 1D or 2D relevant set 90% of times.
+plausible<- colnames(features_AP_filtered90)
+
+stopifnot(  #code below works if all taxa in the set plausible taxo were present in each of the
+            #subsamples (might dissapear due to filtering out of sparse columns)
+            #this condition catches this unlikely exception
+all(sapply(full_MDFSres, function(mdfs)
+              sapply(mdfs, function(x) 
+                  plausible %in% x$feature_names
+                )     
+))
+)
+rel_2D<-
+presence_mD<-presence_0D<-abundance_per_repD<-
+presence_mH<-presence_0H<-abundance_per_repH<-
+presence_m<-presence_0<-abundance_per_rep<-
+IG1D<-IG2D<- matrix(nrow=n_repeats, ncol=length(plausible))
+
+partners_m0<-partners_0<-partners_m<- matrix(0,nrow=length(plausible), ncol=ncol(tdata))
+
+for (j in c(1:n_repeats) ){
+  mdfs_j<- full_MDFSres[[j]]
+  for (k in seq_along(mdfs_j)) names(mdfs_j[[k]]$statistic)<- mdfs_j[[k]]$feature_names
+  
+  rel_2D[j,]= plausible %in% union(mdfs_j$res_2Dm$rel_set,
+                                   mdfs_j$res_2D0$rel_set
+                                   )
+  
+  plaus_IG1Dm<- mdfs_j$res_1Dm$statistic[plausible]
+  plaus_IG1D0<- mdfs_j$res_1D0$statistic[plausible]
+  plaus_IG2Dm<- mdfs_j$res_2Dm$statistic[plausible]
+  plaus_IG2D0<- mdfs_j$res_2D0$statistic[plausible]
+  IG1D[j,]<- pmax(plaus_IG1Dm,plaus_IG1D0)
+  mIG2D_bigger<- plaus_IG2Dm>plaus_IG2D0
+  IG2D[j,]<- pmax(plaus_IG2Dm,plaus_IG2D0)
+  
+  full_MDFSres[[1]]$res_2D0$partner_df[full_MDFSres[[1]]$res_2D0$partner_df$rel_name %in% plausible,]
+  pm0j<-pmj<-p0j<- matrix(nrow=length(plausible), ncol=ncol(tdata))
+  for (i_p in seq_along(plausible)){
+    pmj[i_p,]= colnames(tdata) %in%  mdfs_j$res_2Dm$partner_df[ mdfs_j$res_2Dm$partner_df$rel_name== plausible[[i_p]], ]$partner_name
+    p0j[i_p,]= colnames(tdata) %in%  mdfs_j$res_2D0$partner_df[ mdfs_j$res_2D0$partner_df$rel_name== plausible[[i_p]], ]$partner_name
+    pm0j[i_p,]= p0j[i_p,] | pmj[i_p,]
+  }
+  partners_0<- partners_0 + p0j
+  partners_m<- partners_m + pmj
+  partners_m0<- partners_m0 + pm0j
+  
+  #partners_0<- mdfs_j$res_2D0$partner_df
+  #partners_m<- mdfs_j$res_2Dm$partner_df
+  #partners_0<- partners_0[partners_0$synergy,]  #only those which are truly synergistic
+  #partners_m<- partners_m[partners_m$synergy,]
+  #rownames(partners_0)<-partners_0$rel_name     #to make it possible to select by rows
+  #rownames(partners_m)<-partners_m$rel_name     # see partner_j filling
+  #has_partner<- plausible %in% union(partners_0$rel_name, partners_m$rel_name)
+  #partner_j<- rep(NA, length(plausible))
+  #for each of the taxa that had a partner at j-th rep, 
+  #if median based IG was bigger, use partner from partners_m,otherwise from partners_0
+  #partner_j[has_partner]<- ifelse(mIG2D_bigger[has_partner], 
+  #                                partners_m[plausible[has_partner],]$partner_name,
+  #                                partners_0[plausible[has_partner],]$partner_name
+  #                                )
+  #partners_per_rep[j,]=partner_j
+  
+  #mean abundance & presence
+  
+  plausible_ab_at_j<-tdata[ subsample[[j]]$keep, plausible ]
+  presence_m_at_j<-binarize_taxa(as.matrix(plausible_ab_at_j), 
+                thresholds = colMedians(as.matrix(plausible_ab_at_j)) )
+  presence_0_at_j<-binarize_taxa(as.matrix(plausible_ab_at_j), 
+                thresholds = rep(0, ncol(plausible_ab_at_j))) 
+  abundance_per_rep[j,]= colMeans(plausible_ab_at_j)
+  presence_0[j,]=  colMeans(presence_0_at_j)
+  presence_m[j,]=  colMeans(presence_m_at_j)
+  abundance_per_repH[j,]=colMeans(plausible_ab_at_j[y[subsample[[j]]$keep]==0, ])
+  abundance_per_repD[j,]=colMeans(plausible_ab_at_j[y[subsample[[j]]$keep]==1, ])
+  presence_0H[j,]=colMeans(presence_0_at_j[y[subsample[[j]]$keep]==0, ])
+  presence_0D[j,]=colMeans(presence_0_at_j[y[subsample[[j]]$keep]==1, ])
+  presence_mH[j,]=colMeans(presence_m_at_j[y[subsample[[j]]$keep]==0, ])
+  presence_mD[j,]=colMeans(presence_m_at_j[y[subsample[[j]]$keep]==1, ])
+  if ((j-1) %%100==0) message(sprintf("%d/%d",j,n_repeats))
+}
+
+
+
+
+```
+
+```{r}
+rel_2D_named<- rel_2D
+colnames(rel_2D_named)<- sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
+freqs_pure2D<- colSums(rel_2D_named)
+freqs_1or2D<- viz_f90$md12D
+vpm0<- partners_m0
+colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(x)]])
+rownames(vpm0)<-sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
+cbind(rel2D_freq=freqs_pure2D,
+      rel12D_freq=freqs_1or2D,
+      vpm0[, colMaxs(vpm0)>= 200])-> freq_and_partners
+freq_and_partners<- freq_and_partners[ freq_and_partners[, "rel12D_freq"] > 400, ]
+write.csv(freq_and_partners, file= "agp_2D_rel_freq&partnerships.csv")
+```
+
+
+
+```{r fig.width=7, fig.height=6}
+
+
+vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
+vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
+vpm0<- vpm0[, colSums(vpm0)>100]
+
+vpm0_flat<-melt(vpm0)
+colnames(vpm0_flat)<-c("rel","partner","freq")
+ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
+
+```{r fig.width=9, fig.height=6}
+
+vpm0<- partners_m0
+colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(x)]])
+rownames(vpm0)<-sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
+vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
+vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
+vpm0<- vpm0[, colMaxs(vpm0)>300]
+vpm0<- vpm0[rowMaxs(vpm0)>200 , ]
+vpm0_flat<-melt(vpm0)
+colnames(vpm0_flat)<-c("rel","partner","freq")
+ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))+
+    geom_text(aes(label = freq), color = "pink")
+
+```
+###### jackknife estimates of statistics: IG, presence, abundance
+
+```{r}
+
+jackknife_SE<- function(replicates,N,D,R=NULL){
+  if (is.null(R)) R= N/D
+  mean_rep= mean(replicates)
+  sqrt((R/length(replicates))*sum((replicates-mean_rep)^2))
+}
+
+```
+
+
+```{r}
+for (v in names(global_MDFS))
+  names(global_MDFS[[v]]$statistic)<- global_MDFS[[v]]$feature_names
+fs_df<- data.frame(taxon=plausible,
+                        IG2D= pmax(global_MDFS$res_2Dm$statistic[ plausible  ],
+                                   global_MDFS$res_2D0$statistic[ plausible  ]),
+                        IG2D_SD= apply(IG2D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
+                        IG1D= pmax(global_MDFS$res_1Dm$statistic[ plausible  ],
+                                   global_MDFS$res_1D0$statistic[ plausible  ]),
+                        IG1D_SD=apply(IG1D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final)),
+                        rel_1D= features_AP_filtered90["md1D",],
+                        rel_2D= colSums(rel_2D),
+                        rel_u=  features_AP_filtered90["u",]
+                        )
+
+viz_fs_df<- fs_df
+rownames(viz_fs_df)<-NULL
+viz_fs_df$taxon<-sapply(strsplit(fs_df$taxon,"\\."), function(x) x[[length(x)]])
+viz_fs_df[,2:5]<- round(viz_fs_df[,2:5],2)
+viz_fs_df[order(-viz_fs_df$IG2D) , ]
+```
+
+```{r}
+taxonomy.mean.final<- taxonomy.mean.final/10000
+pab_df<- data.frame(taxon=plausible,
+                        ab= colMeans(taxonomy.mean.final[,plausible]),
+                        ab_SD= apply(abundance_per_rep,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37* nrow(taxonomy.mean.final) ),
+                        abH= colMeans(taxonomy.mean.final[ decision.mean.final==0 ,plausible]),
+                        abH_SD= apply(abundance_per_repH,2,jackknife_SE, sum(decision.mean.final==0), 
+                                      0.37*sum(decision.mean.final==0)),
+                        abD= colMeans(taxonomy.mean.final[ decision.mean.final==1 ,plausible]),
+                        abD_SD= apply(abundance_per_repH,2,jackknife_SE, sum(decision.mean.final==1), 
+                                      0.37*sum(decision.mean.final==1)),
+                        pr=colMeans(presence_0),
+                        pr_SD=apply(presence_0,2, jackknife_SE, nrow(taxonomy.mean.final),
+                                    0.37*nrow(taxonomy.mean.final)),
+                        prH=colMeans(presence_0H),
+                        prH_SD=apply(presence_0H,2,jackknife_SE, sum(decision.mean.final==0), 
+                                      0.37*sum(decision.mean.final==0)),
+                        prD=colMeans(presence_0D),
+                        prD_SD=apply(presence_0D,2,jackknife_SE, sum(decision.mean.final==1), 
+                                      0.37*sum(decision.mean.final==1))
+                        )
+
+viz_pab_df<- pab_df
+rownames(viz_pab_df)<-NULL
+viz_pab_df$taxon<-sapply(strsplit(pab_df$taxon,"\\."), function(x) x[[length(x)]])
+viz_pab_df[, grep("ab",colnames(viz_pab_df))]<-10000*viz_pab_df[, grep("ab",colnames(viz_pab_df))]
+viz_pab_df[,2:ncol(viz_pab_df)]<- round(viz_pab_df[,2:ncol(viz_pab_df)],2)
+viz_pab_df[order(-viz_fs_df$IG2D) , ]
+
+```
+
+```{r}
+write.csv(
+cbind( viz_fs_df[order(-viz_fs_df$IG2D),],
+       viz_pab_df[order(-viz_fs_df$IG2D) , 2:ncol(viz_pab_df) ]),
+file="agp_data_per_taxa.csv")
+
+```
+
+
+
+```{r}
+
+viz_fs_df2
+
+```
+
+

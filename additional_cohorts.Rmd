@@ -204,6 +204,7 @@ Thus, based on `interaction_data`, it can create an array of additional, discret
 
 
 ```{r}
+source("FS_functions.R")
 
 MDFS_global<- lapply(names(taxa), function(coh)
   
@@ -486,6 +487,7 @@ library(ggplot2)
 
 
 # Violin plot to show distribution
+levels(long_perf$Method)<- c("MDFS-1D", "MDFS-2D", "MDFS-2D + partners", "U-test", "md12DpInt")
 long_perf<- long_perf[long_perf$Method!="md12DpInt",]
 ggplot(long_perf[(!(
                   (long_perf$Metric=="OR") &
@@ -504,8 +506,8 @@ ggplot(long_perf[(!(
   facet_wrap( Metric~Cohort, scales = "free_y") +  # Separate plots for AUC and OR
   #theme_minimal() +
   labs(title = sprintf("Performance Metric Distributions by Method, l.o.frac= %.2f",lop),
-       y = "Value", x = "Feature Selection Method") +
-  theme(legend.position = "none")
+       y = "Value", x = "Feature Selection Method") +theme_minimal()+
+  theme(legend.position = "bottom", axis.text.x=element_blank(), axis.ticks.x=element_blank())
 
 ```
 
@@ -553,8 +555,19 @@ features_AP_90$YachidaS_2019|> t()
 
 
 ```{r}
-
-
+print("Fraction of plausible taxa found by U-test in global run, also found in one global run MDFS")
+mapply(function(mdfs, u, recurrent90){
+  #print(rownames(recurrent90))
+  Reduce(union,lapply(mdfs, function(x) union(x$rel_set, x$partner_set) ))-> all_the_mdfs_vars
+  u$rel_set-> u_vars
+  intersect(all_the_mdfs_vars, colnames(recurrent90))-> all_the_mdfs_vars
+  intersect(u_vars, colnames(recurrent90))-> u_vars
+ # print(all_the_mdfs_vars)
+#  print(u_vars)
+  sum(u_vars %in% all_the_mdfs_vars)/length(u_vars)},
+  MDFS_global, U_global, features_AP_90
+  
+  )
 ```
 
 
