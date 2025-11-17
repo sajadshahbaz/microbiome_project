@@ -492,6 +492,147 @@ for (j in 1:n_repeats){
 
 ```
 
+##### One randomly selected repetition
+
+```{r}
+set.seed(644545)
+r=sample.int(n_repeats,size = 1)
+print(r)
+METHODxROC=list()
+AUCxROC=list()
+CONFxMETHOD=list()
+ORxMETHOD=list()
+for (METHOD in METHODS[1:4]){
+fname=sprintf(model_file_string,r,METHOD,lop)
+RF_mdl<- readRDS(fname)
+no_features<- (length(RF_mdl)==1)
+stopifnot(!no_features)
+    f_key= if (METHOD %in% names(features)) METHOD else "md12Dp"
+    X_test<- tdata[ subsample[[r]]$leave, ,drop=FALSE]
+    X_rf<- X_test[, features[[f_key]][[r]], drop=FALSE ]
+    test_pred= predict(RF_mdl, newdata=  X_rf,
+                      type="prob"  )[,2]
+    y_thr= balanced.decision(x = RF_mdl$votes[,2],
+                             y= y[   subsample[[r]]$keep ] )$threshold
+    y_pbin<- (test_pred >= y_thr)
+    CONFxMETHOD[[METHOD]]==table(Predicted=as.numeric(y_pbin),Actual= y[   subsample[[r]]$leave ] )
+    ORxMETHOD[[METHOD]]=odds_ratio(y_pred = y_pbin,y = y[ subsample[[r]]$leave])
+    roc_curve=roc(response=y[   subsample[[r]]$leave ],
+        predictor=test_pred,quiet=TRUE)
+METHODxROC[[METHOD]]= roc_curve
+AUCxROC[[METHOD]]= auc(roc_curve)
+}
+names(METHODxROC)<- c("MDFS-1D","MDFS-2D", "MDFS-2D + partners", "U-test")
+
+for (i_nm in seq_along(names(METHODxROC)))
+  for (i_nm2 in seq_along(names(METHODxROC)))
+    if (i_nm<i_nm2) { nm<- names(METHODxROC)[[i_nm]]; nm2<- names(METHODxROC)[[i_nm2]] 
+      print(sprintf("%s vs %s", nm,nm2))
+    print(roc.test(METHODxROC[[nm]], METHODxROC[[nm2]]))
+    }
+names(METHODxROC)<- sapply(seq_along(METHODxROC),
+                           function(m)
+                             sprintf("%s, AUC=%.2f",
+                                     names(METHODxROC)[[m]],
+                                     AUCxROC[[m]]))
+         
+#pdf("roc_curve_v2.pdf", width=8,height=5)
+library(ggplot2)
+ggroc(METHODxROC, legacy.axes = T,aes=c("color"),lwd=0.75) +
+geom_abline(slope = 1 ,intercept = 0, linetype="dashed") + # add identity line
+theme(
+panel.background = element_blank(),
+axis.title.x = element_text(size =18, face = 'bold'),
+axis.title.y = element_text(size =18, face = 'bold'),
+panel.border = element_rect(size = 2, fill = NA),
+axis.text.x = element_text(size = 14, face ='bold'),
+axis.text.y = element_text(size = 14, face ='bold')) +
+xlab('100% - Specificity') +
+ylab('Sensitivity') +
+scale_x_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
+scale_y_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
+  ggtitle("Feature Selection + RF: ROC comparison") +# theme(legend.position = "left")
+  scale_color_discrete(name = "FS method") +
+   guides(color = guide_legend(override.aes = list(lwd = 5)))
+#dev.off()
+```
+
+
+###### Synthetic variables test (chinese paper (doesnt work))
+
+```{r}
+pairs<-rbind(
+cbind(full_MDFSres[[r]]$res_2Dm$interaction_data$rel_name,
+full_MDFSres[[r]]$res_2Dm$interaction_data$partner_name),
+cbind(full_MDFSres[[r]]$res_2D0$interaction_data$rel_name,
+full_MDFSres[[r]]$res_2D0$interaction_data$partner_name))
+METHOD="md12pInt"
+    f_key= if (METHOD %in% names(features)) METHOD else "md12Dp"
+    X_test<- tdata[ subsample[[r]]$leave, ,drop=FALSE]
+    X_train<- tdata[ subsample[[r]]$keep, ,drop=FALSE]
+    X_rf_train<- X_train[, features[[f_key]][[r]], drop=FALSE ]
+    X_rf_test<- X_test[, features[[f_key]][[r]], drop=FALSE ]
+synthetic_variables<- function(data, pairs, pairwise_fun){
+ apply(pairs,1,function(ROW) pairwise_fun(rank(data[, ROW[[1]] ]), rank(data[, ROW[[2]] ])),
+       simplify=FALSE) |> as.data.frame()
+}
+S_trainPlus<-synthetic_variables(X_rf_train, pairs,function(x,y) x+y)
+S_trainDiff<-synthetic_variables(X_rf_train, pairs,function(x,y) x-y)
+S_trainProd<-synthetic_variables(X_rf_train, pairs,function(x,y) x*y)
+S_trainSgn<-synthetic_variables(X_rf_train, pairs,function(x,y)  x>y)
+S_trainAbs<-synthetic_variables(X_rf_train, pairs,function(x,y)  abs(x-y))
+X_rf_trainPlus<- cbind(X_rf_train,S_trainPlus)
+X_rf_trainDiff<- cbind(X_rf_train,S_trainDiff)
+X_rf_trainProd<- cbind(X_rf_train,S_trainProd)
+X_rf_trainSgn<- cbind(X_rf_train,S_trainSgn)
+X_rf_trainAbs<- cbind(X_rf_train,S_trainAbs)
+X_rf_trainAll<- cbind(X_rf_train, S_trainPlus,
+                      S_trainDiff,
+                      S_trainProd,
+                      S_trainSgn,
+                      S_trainAbs)
+message("rfs...")
+rf_plus<- randomForest(x= X_rf_trainPlus,
+                       y= y[ subsample[[r]]$keep ] |> as.factor() )
+cat("x")
+rf_diff<- randomForest(x= X_rf_trainDiff,
+                       y= y[ subsample[[r]]$keep ] |> as.factor() )
+cat("x")
+rf_prod<- randomForest(x= X_rf_trainProd,
+                       y= y[ subsample[[r]]$keep ] |> as.factor() )
+cat("x")
+rf_sgn<- randomForest(x= X_rf_trainSgn,
+                       y= y[ subsample[[r]]$keep ] |> as.factor())
+cat("x")
+rf_abs<- randomForest(x= X_rf_trainAbs,
+                       y= y[ subsample[[r]]$keep ] |> as.factor())
+cat("x")
+rf_all<- randomForest(x= X_rf_trainAll,
+                       y= y[ subsample[[r]]$keep ] |> as.factor())
+cat("x")
+
+```
+
+
+```{r}
+
+auc_from_rf<- function(rf,y_train){
+ as.numeric( auc(response=y_train, predictor= rf$votes[,2]))
+}
+
+print(auc_from_rf(rf=rf_plus, y_train = y[ subsample[[r]]$keep ] ))
+print(auc_from_rf(rf=rf_diff, y_train = y[ subsample[[r]]$keep ] ))
+print(auc_from_rf(rf=rf_prod, y_train = y[ subsample[[r]]$keep ] ))
+print(auc_from_rf(rf=rf_sgn, y_train = y[ subsample[[r]]$keep ] ))
+print(auc_from_rf(rf=rf_abs, y_train = y[ subsample[[r]]$keep ] ))
+print(auc_from_rf(rf=rf_all, y_train = y[ subsample[[r]]$keep ] ))
+
+```
+
+
+###### Aggregate performance calculation and visualization
+
+
 ```{r}
 
 if (!file.exists("performance_agp.rds")) saveRDS(performance, "performance_agp.rds")
@@ -512,7 +653,7 @@ long_perf <- melt(performance,
 #install.packages("dplyr")
 ```
 ```{r}
-install.packages("ggplot2")
+#install.packages("ggplot2")
 library(ggplot2)
 #library(dplyr)
 #summary_lines <- long_perf %>%
@@ -523,10 +664,10 @@ library(ggplot2)
 #    notch_upper = quantile(Value, 0.75) - 1.57 * IQR(Value) / sqrt(n()),
 #    .groups = "drop"
 #  )
-
+levels(long_perf$Method) <- c("MDFS-1D", "MDFS-2D", "MDFS-2D + partners", "U-test", "md12DpInt")
 
 # Violin plot to show distribution
-ggplot(long_perf, aes(x = Method, y = Value, fill = Method)) +
+ggplot(long_perf[long_perf$Method!="md12DpInt",], aes(x = Method, y = Value, fill = Method)) +
   #geom_violin(trim = FALSE, alpha = 0.7) +
   geom_boxplot(width = 0.3, color = "black", notch = TRUE) +
    #geom_hline(data = summary_lines, aes(yintercept = median, color = Method), linetype = "solid") +
@@ -537,10 +678,11 @@ ggplot(long_perf, aes(x = Method, y = Value, fill = Method)) +
   facet_wrap(~ Metric, scales = "free_y") +  # Separate plots for AUC and OR
   #theme_minimal() +
   labs(title = sprintf("Performance Metric Distributions by Method, l.o.frac= %.2f",lop),
-       y = "Value", x = "Feature Selection Method") +
-  theme(legend.position = "none")
+       y = "Value", x = "Feature Selection Method") + theme_minimal()+
+  theme(legend.position = "right", axis.text.x = element_blank(), axis.ticks.x = element_blank())
 ```
 
+###### Selection & partnership frequency calculation and visualization
 
 
 ```{r}
@@ -576,14 +718,14 @@ viz_f90[ do.call(order, viz_f90),]
 
 ```{r}
 # mean IG = mean over all repeats
-# IG in repeat= max IG (median, zero)
+# IG in repeat= max IG (median-discretized, zero-discretized)
 # partner in repeat= one with synergy
 #       if both zero and median are synergistic - arg max (IG)
 #overall partner - most frequent
 #only partners - overall partners but not in 1D or 2D relevant set 90% of times.
 plausible<- colnames(features_AP_filtered90)
 
-stopifnot(  #code below works if set of plausible taxons were all present in each of the
+stopifnot(  #code below works if all taxa in the set plausible taxo were present in each of the
             #subsamples (might dissapear due to filtering out of sparse columns)
             #this condition catches this unlikely exception
 all(sapply(full_MDFSres, function(mdfs)
@@ -667,11 +809,26 @@ for (j in c(1:n_repeats) ){
 
 ```
 
-```{r fig.width=7, fig.height=6}
-
+```{r}
+rel_2D_named<- rel_2D
+colnames(rel_2D_named)<- sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
+freqs_pure2D<- colSums(rel_2D_named)
+freqs_1or2D<- viz_f90$md12D
 vpm0<- partners_m0
 colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(x)]])
 rownames(vpm0)<-sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
+cbind(rel2D_freq=freqs_pure2D,
+      rel12D_freq=freqs_1or2D,
+      vpm0[, colMaxs(vpm0)>= 200])-> freq_and_partners
+freq_and_partners<- freq_and_partners[ freq_and_partners[, "rel12D_freq"] > 400, ]
+write.csv(freq_and_partners, file= "agp_2D_rel_freq&partnerships.csv")
+```
+
+
+
+```{r fig.width=7, fig.height=6}
+
+
 vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
 vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
 vpm0<- vpm0[, colSums(vpm0)>100]
@@ -700,7 +857,7 @@ ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
     geom_text(aes(label = freq), color = "pink")
 
 ```
-
+###### jackknife estimates of statistics: IG, presence, abundance
 
 ```{r}
 
@@ -774,34 +931,7 @@ file="agp_data_per_taxa.csv")
 
 ```
 
-```{r}
 
-max(partners_m0)
-
-```
-
-
-
-```{r}
-
-viz_fs_df2<-viz_fs_df[,c("taxon","IG2D","IG1D","rel_1D","rel_2D")]
-viz_fs_df2$best_partner=sapply(plausible,
-                         function(taxon){ if (taxon %in% colnames(partners_per_rep))
-                           names(table(partners_per_rep[,taxon]))[[which.max(table(partners_per_rep[,taxon]))]]
-                           else "foo"
-                         }
-                    )
-
-viz_fs_df2$partnership_freq=sapply(plausible,
-                         function(taxon){ if (taxon %in% colnames(partners_per_rep))
-                           unname(table(partners_per_rep[,taxon])[[which.max(table(partners_per_rep[,taxon]))]])
-                           else "foo"
-                         }
-                    )
-fs_df2<- viz_fs_df2
-fs_df2$taxon<- fs_df$taxon
-viz_fs_df2$best_partner<- sapply( strsplit(viz_fs_df2$best_partner, split='\\.'), function(x) x[[length(x)]] )
-```
 
 ```{r}
 
@@ -810,163 +940,7 @@ viz_fs_df2
 ```
 
 
-```{r}
 
-rel1D2D_strong_partnerships<-fs_df2[(fs_df2$rel_2D==500) &
-  (fs_df2$rel_1D==500) &
-  (fs_df2$partnership_freq>=250),] 
-
-short_taxon<-sapply( strsplit(rel1D2D_strong_partnerships$taxon, split='\\.'), function(x) x[[length(x)]] )
-short_partner<-sapply( strsplit(rel1D2D_strong_partnerships$best_partner, split='\\.'), function(x) x[[length(x)]] )
-
-for (i in 1:nrow(rel1D2D_strong_partnerships)){
-  rel1D2D_strong_partnerships$taxon
-  rel <- as.integer(taxonomy.mean.final[, rel1D2D_strong_partnerships$taxon[[i]]] > 0)
-  partner <- as.integer(taxonomy.mean.final[, rel1D2D_strong_partnerships$best_partner[[i]] ] > 0)
- 
-  # Print header
-  cat("\n\n---\n")
-  cat(sprintf("### Pair %d: %s vs %s\n", i, short_taxon[[i]], short_partner[[i]]))
-  
-  # Print frequency
-  cat(sprintf("**Partnering frequency**: %d\n\n", rel1D2D_strong_partnerships$partnership_freq[[i]]))
-  # Tabulate
-  tab <- table(Rel = rel, Partner = partner, Class = decision.mean.final)
-  print("y==0 | y==1")
-  print(cbind(tab[,,1], tab[,,2] ))
-}
-```
-
-
-```{r}
-
-n_vars <- ncol(partners_per_rep)  
-
-
-ppr<- partners_per_rep
-colnames(ppr)<-sapply(strsplit(colnames(partners_per_rep), "\\."),function(x) x[[length(x)]])
-for (j in 1:ncol(ppr)) ppr[,j]= c( ppr[,j][is.na(ppr[,j])], sort(ppr[,j][!is.na(ppr[,j])]))
-ppr<- as.data.frame(ppr)
-for (j in 1:ncol(ppr)) ppr[,j]<- as.factor(ppr[,j]) |> as.integer()
-ppr<- ppr[do.call(order, c(ppr, na.last=FALSE )),]
-ppr<- as.matrix(ppr)
-library(RColorBrewer)
-
-n_cols <- ncol(ppr)
-n_rows <- nrow(ppr)
-
-# Function to generate colors for each column based on unique non-NA values
-get_col_palette <- function(col_vals) {
-  unique_vals <- sort(unique(col_vals[!is.na(col_vals)]))
-  n_levels <- length(unique_vals)
-  
-  base_colors <- brewer.pal(min(max(n_levels, 3), 8), "Set1")
-  if (n_levels > length(base_colors)) {
-    base_colors <- rep(base_colors, length.out = n_levels)
-  }
-  
-  # Map unique_vals to consecutive indices: 1, 2, 3, ...
-  mapping <- setNames(seq_along(unique_vals), unique_vals)
-  
-  # Return list with color vector and mapping
-  list(
-    colors = base_colors,
-    mapping = mapping
-  )
-}
-
-# Create a color matrix matching ppr's entries (including NAs)
-color_mat <- matrix(NA, nrow = n_rows, ncol = n_cols)
-
-for (j in 1:n_cols) {
-  pal_list <- get_col_palette(ppr[, j])
-  pal_colors <- pal_list$colors
-  pal_map <- pal_list$mapping
-  
-  for (i in 1:n_rows) {
-    val <- ppr[i, j]
-    if (is.na(val)) {
-      color_mat[i, j] <- "grey"
-    } else {
-      # Use mapping to get index for color
-      idx <- pal_map[as.character(val)]
-      color_mat[i, j] <- pal_colors[idx]
-    }
-  }
-}
-
-
-
-# Plot with image()
-# image() expects numeric matrix, so we map colors to numbers
-# Create a vector of unique colors in color_mat for the palette
-
-all_colors <- unique(as.vector(color_mat))
-all_colors <- all_colors[!is.na(all_colors)]
-
-# Map colors to integers for image()
-color_indices <- matrix(match(color_mat, all_colors), nrow = n_rows, ncol = n_cols)
-
-# image() plots columns from left to right and rows from bottom to top,
-# so to have top rows at top, we flip rows
-
-par(mar = c(15, 4, 1, 2) + 0.1)  # increase bottom margin to 6 lines (default is 5.1)
-
-image(t(apply(color_indices, 2, rev)),
-      col = all_colors,
-      axes = FALSE,
-      xlab = NA,
-      ylab = "Trials",
-      main = "Distinct partners per variable in each repeat")
-
-# Add axis labels
-axis(1, at = seq(0,1,length.out = n_cols), labels = colnames(ppr), las=2)
-axis(2, at = seq(0,1,length.out = n_rows), labels =NA)
-box()
-```
-
-
-
-```{r}
-par(mar = c(5, 3, 2, 1))
-rocs<-list()
-model_file_string<-"RF_models/agp_j=%d_fs=%s_lop=%.2f.rds"
-set.seed(3423)
-r<- sample(1:n_repeats,1)
-for (method in c("u","md1D","md12D","md12Dp")){
-
-colormap<- c(u="purple",
-             "md1D"="green",
-             "md12D"="blue",
-             "md12Dp"="red"
-             )
-fname=sprintf(model_file_string,r,method,lop)
-RF_mr<- readRDS(fname)
-predict(RF_mr, newdata= tdata[ subsample[[r]]$leave, 
-                               features[[method]][[r]],
-                               drop=FALSE
-                               ], type="prob")[,2]->y_pred
-
-ROC<-roc(response=y[ subsample[[r]]$leave ], 
-         predictor=y_pred)
-rocs[[method]]=ROC
-if (method=="u")
-plot(ROC,
-     legacy.axes = TRUE,
-     xlim = c(1, 0),        # Desired limits
-     xaxs = "i",            # Prevent automatic padding
-     ylim = c(0, 1),        # Optional: force y-limits too
-     yaxs = "i",            # Prevent vertical padding
-     asp = NA,               # Avoid forced aspect ratio
-     col=colormap[[method]],
-      mar = c(5, 4, 2, 2)
-) else
-plot.roc(ROC, main=method, add=TRUE,, col=colormap[[method]], xlim=c(1,0),
-     legacy.axes=TRUE)
-}
-legend("bottomright",legend=c("u","md1D","md12D","md12Dp"),lwd=2,col=colormap
-)
-```
 
 ```{r}
 lapply(rocs, auc)
@@ -974,6 +948,7 @@ roc.test(rocs$md12Dp, rocs$u)
 roc.test(rocs$md12Dp, rocs$md1D)
 roc.test(rocs$md12Dp, rocs$md12D)
 ```
+
 ```{r}
 
 roc.test(rocs$md12Dp, rocs$md1D)
