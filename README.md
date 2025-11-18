@@ -13,9 +13,9 @@ Main results are contained in `.Rmd` notebooks:
 
 ## Data
 
-- `taxa.tsv` - unnormalized abudance, american gut data [REFERENCE] #TO DO
+- `taxa.tsv` - unnormalized abudance, american gut data (MGnify portal,  study accession: MGYS00000596)
 
-- `metadata.csv` - additional covariates for american gut samples, such as age, weight, disease status etc. {REFERENCE]
+- `metadata.csv` - additional covariates for american gut samples, such as age, weight, disease status etc. 
 
 - `merged_metadata.txt, merged_taxonomy.txt` - contains additional datasets [NAMES, REFERENCE] for further validation of our findings. First file contains disease status information, second one - abundance.  #TO DO
 
@@ -82,8 +82,19 @@ R version 4.2.2
 - `randomForest_4.7-1.1`
 - `matrixStats_0.63.0`
 - `magrittr_2.0.3`
-- `ggplot2[VERSION_NUMBER_HERE` # TO DO
-- `reshape2[VERSION_NUMBER_HERE` # TO DO
+- `ggplot2_3.4.1`
+- `reshape2_1.4.4`
+- `remotes_2.4.2`
+
+
+#### Packages outside of CRAN:
+
+MDFS development version: `MDFS_1.5.5`
+
+```
+https://github.com/p100mma/mdfs-r
+```
+
 
 #### System and hardware requirements:
 
