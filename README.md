@@ -1,15 +1,41 @@
 # microbiome_project
 in this repository, we have included data and algorithms to compute synergy among microbiome community using machine learning algorithms. we used multidimensional feature selection and randomforest classifier as well as novel methodology to compute synergy among gut bacterial in food allergy condition   
 
-# Main pipeline
+# Structure of this repository
 
-Included in the ile `main_pipeline.Rmd`. See rendered html [here](https://htmlpreview.github.io/?https://github.com/sajadshahbaz/microbiome_project/blob/main/docs/main_pipeline.html) 
+## Main results
 
-Other scripts contain internal helper functions.
+Main results are contained in `.Rmd` notebooks:
+
+- `agp_analysis_public.Rmd` - results on american gut project dataset
+
+- `additional_cohorts_public.Rmd` -  results on additional cohorts (further validation of the model on independent data)
+
+## Data
+
+- `taxa.tsv` - unnormalized abudance, american gut data [REFERENCE] #TO DO
+
+- `metadata.csv` - additional covariates for american gut samples, such as age, weight, disease status etc. {REFERENCE]
+
+- `merged_metadata.txt, merged_taxonomy.txt` - contains additional datasets [NAMES, REFERENCE] for further validation of our findings. First file contains disease status information, second one - abundance.  #TO DO
+
+## Scripts & directories
+
+Directories are set up to store results of intermediate computations:
+
+- `RF_models` - stores trained random forest models - each of tested variants, on each of the datasets and for every resampling repetition
+
+- `features` - results of feature selection - likewise, for every tested variant,dataset and resampling trial.
+
+### Scripts
+
+`FS_functions.R` contains wrappers around feature selection methods from `MDFS` package and base `R` (such as plain U-test). Illustrative examples on how to use those subroutines are given in `.Rmd` files. 
+
+`subsample_nonrepeating_donors.R` - two step sampling procedure for american gut project data, necessary to handle cases when one donor delivered more than one stool sample.
 
 ## How to run
 
-One can either ensure the same versions of the software that are listed below are available on his machine and open `.Rmd` file with `RStudio` or run the attached docker image:
+One can either ensure the same versions of the software that are listed below are available on his machine and open `.Rmd` file with `RStudio` or run the attached docker image, see the instructions below:
 
 1. Clone the repo:
 
@@ -42,7 +68,7 @@ sudo docker run --rm \
 
 Afterwards, open `http://localhost:8888/` URL in the browser and use `username=rstudio` and `password=password` credentials to open RStudio Server.
 
-Open `main_pipeline.Rmd` either through `Files > Open` or by navigating file list in the window in the bottom right section of the screen.
+Open `.Rmd` files of interest, either through `Files > Open` or by navigating file list in the window in the bottom right section of the screen.
 
 ## Used software and packages
 
@@ -54,20 +80,14 @@ R version 4.2.2
 
 - `pROC_1.18.0`
 - `randomForest_4.7-1.1`
-- `MDFS_1.4.0`
 - `matrixStats_0.63.0`
 - `magrittr_2.0.3`
+- `ggplot2[VERSION_NUMBER_HERE` # TO DO
+- `reshape2[VERSION_NUMBER_HERE` # TO DO
 
 #### System and hardware requirements:
 
 Docker image emulates `x86_64-pc-linux-gnu (64-bit)` running under `Ubuntu 22.04.4 LTS`.
 
-We have run all the tests on local PC `<specs here>` under `x` time.
+We have run all the tests on local PC `<specs here>` under `x` time. #TO DO
 
-## graded heatmap construction
-
-- `graded_heatmap.R`
-
-## interaction plot
-
--`interactions_plots.R`

@@ -204,6 +204,8 @@ Thus, based on `interaction_data`, it can create an array of additional, discret
 
 
 ```{r}
+library(matrixStats)
+library(MDFS)
 source("FS_functions.R")
 
 MDFS_global<- lapply(names(taxa), function(coh)

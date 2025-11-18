@@ -641,7 +641,7 @@ if (!file.exists("performance_agp.rds")) saveRDS(performance, "performance_agp.r
 ```
 
 ```{r}
-install.packages("reshape2")
+#install.packages("reshape2")
 library(reshape2)
 long_perf <- melt(performance, 
                   varnames = c("Method", "Metric", "Repeat"), value.name = "Value")
@@ -893,6 +893,47 @@ viz_fs_df[order(-viz_fs_df$IG2D) , ]
 ```
 
 ```{r}
+
+plot(viz_fs_df$IG2D,colMeans(IG2D), 
+     main=sprintf("IG2D- jackknife mean vs full data point estimate, \n cor= %.4f",
+                  cor(viz_fs_df$IG2D,colMeans(IG2D))
+                  )
+)
+abline(lm(colMeans(IG2D)~viz_fs_df$IG2D), col="red")
+plot(viz_fs_df$IG1D,colMeans(IG1D), main=sprintf("IG2D- jackknife mean vs full data point estimate, \n cor= %.4f",
+                  cor(viz_fs_df$IG1D,colMeans(IG1D)) ))
+abline(lm(colMeans(IG1D)~viz_fs_df$IG1D), col="red")
+
+
+hist(IG2D[,27])
+hist(IG1D[,27])
+hist(IG2D[,10])
+hist(IG1D[,10])
+
+```
+
+```{r}
+ses<-list(
+se100=apply(IG2D[1:100,],2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
+se200=apply(IG2D[1:200,],2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
+se300=apply(IG2D[1:300,],2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
+se400=apply(IG2D[1:400,],2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
+se500=apply(IG2D[1:500,],2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) )
+)
+```
+
+```{r}
+
+for (i in seq_along(ses))
+  for (j in seq_along(ses))
+    if (i<j)
+      plot(ses[[i]],ses[[j]], main=sprintf("%s vs %s", names(ses)[[i]], names(ses)[[j]] ))
+    
+
+
+```
+
+```{r}
 taxonomy.mean.final<- taxonomy.mean.final/10000
 pab_df<- data.frame(taxon=plausible,
                         ab= colMeans(taxonomy.mean.final[,plausible]),
@@ -930,13 +971,3 @@ cbind( viz_fs_df[order(-viz_fs_df$IG2D),],
 file="agp_data_per_taxa.csv")
 
 ```
-
-
-
-```{r}
-
-viz_fs_df2
-
-```
-
-
