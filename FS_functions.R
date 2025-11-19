@@ -13,9 +13,15 @@
 # adjusted.p.value - p-values after multiple test correction
 # rel_set - names of features found relevant 
 
-U_test_FS<- function(X, y, lvl=0.05, p.adjust.method="holm"){
+U_test_FS<- function(X, y, lvl=0.05, p.adjust.method="holm",
+		     min_presence=NULL){
 data=X
 decision=y
+if (!is.null(min_presence)){
+   	tholds_0= rep(0,ncol(data)) 
+	garbage <- (colSums(binarize_taxa(data,tholds_0))< min_presence)
+	data<- data[,!garbage]
+}
 ut<- lapply(1:ncol(data),
 		function(j){
 		res<-wilcox.test(  data[decision==1,j], data[decision==0,j] )

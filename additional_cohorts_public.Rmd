@@ -215,7 +215,7 @@ MDFS_global<- lapply(names(taxa), function(coh)
 
 U_global<- lapply(names(taxa), function(coh)
   
-  U_test_FS(X = taxa[[coh]], y = decision[[coh]], lvl=0.05, p.adjust.method = "holm")
+  U_test_FS(X = taxa[[coh]], y = decision[[coh]], lvl=0.05, p.adjust.method = "holm", min_presence=30)
   )
 
 ```
@@ -294,7 +294,7 @@ for (coh in cohort_ids){
 	U_test_FS(X= taxa[[coh]][ subsample[[coh]][[j]]$keep, ], 
 	      y= decision[[coh]][ subsample[[coh]][[j]]$keep ],
 		lvl = 0.05,
-		p.adjust.method = "holm")->u_j
+		p.adjust.method = "holm", min_presence=30)->u_j
 	fs_j=list(mdfs=all_mdfs_j, u=u_j)
 	saveRDS(fs_j, fs_j_fname)
   				} else
@@ -570,4 +570,9 @@ mapply(function(mdfs, u, recurrent90){
   MDFS_global, U_global, features_AP_90
   
   )
+```
+```{r}
+
+
+
 ```

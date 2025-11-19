@@ -224,21 +224,19 @@ library(MDFS)
 source("FS_functions.R")
 global_MDFS<-MDFS_FS(X= taxonomy.mean.final,
         y= decision.mean.final,lvl = 0.05,seed = 123,mc=30  )
-global_U<- U_test_FS(X=taxonomy.mean.final, y=decision.mean.final, lvl=0.05)
+global_U<- U_test_FS(X=taxonomy.mean.final, y=decision.mean.final, lvl=0.05, min_presence=30)
 
 
 ```
 
 
-## Base resamples construction
+## Subsampling
 
-Function `draw_once_per_host` does following things:
+`subsamample_donors` randomly splits donors into two groups - "keep" set and "leave out" group.
+for each of the donors, one sample is picked at random (some donors have sent more than one sample).
+Loop repeats this 500 times.
 
-- draws one sample from each unique donor which has submitted more than one sample
-
-- binarizes taxa by their median value, setting values bigger than median to 1
-
-- filters out sparse taxa according to `min_minority_class_taxa`
+For each of  the repeats, we store the sample indicator vector (`keep` vs `leave` out group, according to the index in original data).
 
 ```{r}
 source("subsample_nonrepeating_donors.R")
@@ -246,20 +244,20 @@ host_id<- metadata$host.subject.id
 names(host_id)<- rownames(metadata)
 subsample<-list()
 n_repeats=500
-if (!file.exists("agp_subsamples.rds")){
+if (!file.exists("agp_subsamples63.rds")){
 for (i in 1:n_repeats){
   set.seed(i)
   subsample_donors(taxonomy=tdata, disease=y,
                    host_id=host_id,
-                   subsampleSize = 0.8,
+                   subsampleSize = 0.63,
                    print_summary = FALSE
                    )-> subsample[[i]]
 if (i%% 50==0) message(sprintf("%d/500 done",i))
 }
   invisible()
-saveRDS(subsample, "agp_subsamples.rds") 
+saveRDS(subsample, "agp_subsamples63.rds") 
 } else {
-  subsample<-readRDS("agp_subsamples.rds")
+  subsample<-readRDS("agp_subsamples63.rds")
 }
 ```
 
@@ -341,7 +339,8 @@ for (j in 1:n_repeats){
       U_test_FS(X=tdata[ subsample[[j]]$keep, ],
                 y = y[ subsample[[j]]$keep ],
                 lvl = 0.05,
-                p.adjust.method = "holm")->u_j
+                p.adjust.method = "holm",
+                min_presence=30)->u_j
       fs_j=list(mdfs=all_mdfs_j, u=u_j)
       saveRDS(fs_j, fs_j_fname)
       } else {
@@ -352,7 +351,7 @@ for (j in 1:n_repeats){
   
   full_MDFSres[[j]]=all_mdfs_j
   full_Ures[[j]]=u_j
-  if (!file.exists(features_file_string)){
+  if  (!file.exists(features_file_string)) {
             features$u[[j]]=u_j$rel_set
             features$md1D[[j]]=union(all_mdfs_j$res_1Dm$rel_set, all_mdfs_j$res_1D0$rel_set)
             features$md12D[[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$rel_set, 
