@@ -5,6 +5,9 @@ output:
   html_document:
     toc: true
     theme: united
+execute:
+  docker: 
+    batch_agp:latest
 ---
 
 ```{r setup, include=FALSE}
@@ -15,7 +18,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Read the raw taxonomy abundance info and metadata from delimiter separated files.
 
-```{r read}
+```{r}
+#| label: read_data
+#| cache: true
 metadata.filename <- "metadata.csv"
 taxa.filename <- "taxa.tsv"
 tdata <- as.data.frame(t(read.delim(taxa.filename, header = TRUE, sep = "\t")))
@@ -32,6 +37,10 @@ metadata<-metadata[,-1]
 
 
 ```{r}
+#| label: rmna
+#| dependson: read_data
+#| cache: true
+
 library(magrittr)
 c("sex","height.cm","weight.kg","age.years")-> confounding_factors
 confounding_factors %in% colnames(metadata)
@@ -51,6 +60,9 @@ metadata<-metadata[!to_remove_mask, ]
 #### Bacteria selection and stool samples filtering
 
 ```{r}
+#| label: bacsel
+#| dependson: rmna
+#| cache: true
 #1. skip non bacterial taxa
 tdata<- tdata[, grep('sk__Bacteria', colnames(tdata)) ]
 print("inital number of taxa samples")
@@ -69,6 +81,9 @@ Normalize abundancies and use proportions to calculate 3 versions of alpha diver
 Investigation suggests a common cutoff point, which corresponds to minimum cumulative count of `3636`.
 
 ```{r}
+#| label: filter1
+#| dependson: bacsel
+#| cache: true
   t_rownames<- rownames(tdata)
   tdata<- lapply(tdata, as.numeric) %>% as.data.frame()
   rownames(tdata)<- t_rownames
@@ -99,6 +114,9 @@ Investigation suggests a common cutoff point, which corresponds to minimum cumul
 
 
 ```{r}
+#| label: merge
+#| dependson: filter1
+#| cache: true
 common_names<- intersect(rownames(metadata), rownames(tdata))
 tdata<- tdata[common_names,]
 metadata<-metadata[common_names,]
@@ -112,6 +130,9 @@ print(length(unique(metadata$host.subject.id)))
 
 
 ```{r}
+#| label: init_summary
+#| dependson: merge
+#| cache: true
 y<- 1- metadata$allergic.to.i.have.no.food.allergies.that.i.know.of 
 names(y)<- rownames(metadata)
 library(matrixStats)
@@ -220,6 +241,9 @@ fisher.test(rbind(table(meta.mean.final[decision.mean.final==0,5]),
 ###Median dataset MDFS for reference
 
 ```{r}
+#| label: glob_MDFS 
+#| dependson: init_summary
+#| cache: true
 library(MDFS)
 source("FS_functions.R")
 global_MDFS<-MDFS_FS(X= taxonomy.mean.final,
@@ -239,6 +263,9 @@ Loop repeats this 500 times.
 For each of  the repeats, we store the sample indicator vector (`keep` vs `leave` out group, according to the index in original data).
 
 ```{r}
+#| label: subsample
+#| dependson: glob_MDFS
+#| cache: true
 source("subsample_nonrepeating_donors.R")
 host_id<- metadata$host.subject.id
 names(host_id)<- rownames(metadata)
@@ -300,6 +327,9 @@ Detailed steps of MDFS pipeline implemented in `MDFS_FS()` function are describe
 
 
 ```{r}
+#| label: compute
+#| dependson: subsample
+#| cache: true
 subsample<- readRDS("agp_subsamples63.rds")
 n_repeats=500
 library(MDFS)
@@ -408,6 +438,9 @@ for (j in 1:n_repeats){
 
 
 ```{r}
+#| label: performance
+#| dependson: compute
+#| cache: true
 library(pROC)
 n_repeats=500
 #n_repeats=30
@@ -494,6 +527,10 @@ for (j in 1:n_repeats){
 ##### One randomly selected repetition
 
 ```{r}
+#| label: roc
+#| dependson: performance
+#| cache: true
+
 set.seed(644545)
 r=sample.int(n_repeats,size = 1)
 print(r)
@@ -560,6 +597,9 @@ scale_y_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
 ###### Synthetic variables test (chinese paper (doesnt work))
 
 ```{r}
+#| label: synthetic
+#| dependson: roc
+#| cache: true
 pairs<-rbind(
 cbind(full_MDFSres[[r]]$res_2Dm$interaction_data$rel_name,
 full_MDFSres[[r]]$res_2Dm$interaction_data$partner_name),
@@ -615,10 +655,14 @@ cat("x")
 
 ```{r}
 
+#| label: synthetic_auc
+#| dependson: synthetic
+#| cache: true
+library(pROC)
 auc_from_rf<- function(rf,y_train){
  as.numeric( auc(response=y_train, predictor= rf$votes[,2]))
 }
-
+print("Synethetic models performace:")
 print(auc_from_rf(rf=rf_plus, y_train = y[ subsample[[r]]$keep ] ))
 print(auc_from_rf(rf=rf_diff, y_train = y[ subsample[[r]]$keep ] ))
 print(auc_from_rf(rf=rf_prod, y_train = y[ subsample[[r]]$keep ] ))
@@ -633,6 +677,9 @@ print(auc_from_rf(rf=rf_all, y_train = y[ subsample[[r]]$keep ] ))
 
 
 ```{r}
+#| label: save_perf
+#| dependson: performance
+#| cache: true
 
 if (!file.exists("performance_agp.rds")) saveRDS(performance, "performance_agp.rds")
 
@@ -640,6 +687,10 @@ if (!file.exists("performance_agp.rds")) saveRDS(performance, "performance_agp.r
 ```
 
 ```{r}
+#| label: reshape_perf
+#| dependson: performance
+#| cache: true
+
 #install.packages("reshape2")
 library(reshape2)
 long_perf <- melt(performance, 
@@ -652,6 +703,10 @@ long_perf <- melt(performance,
 #install.packages("dplyr")
 ```
 ```{r}
+#| label: plot_perf
+#| dependson: reshape_perf
+#| cache: true
+
 #install.packages("ggplot2")
 library(ggplot2)
 #library(dplyr)
@@ -685,6 +740,9 @@ ggplot(long_perf[long_perf$Method!="md12DpInt",], aes(x = Method, y = Value, fil
 
 
 ```{r}
+#| label: freq_filter
+#| dependson: compute
+#| cache: true
 
 universe<- colnames(tdata)
 
@@ -706,6 +764,10 @@ feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over90)
 ```
 
 ```{r}
+#| label: viz_f90
+#| dependson: freq_filter
+#| cache: true
+
 viz_f90<- features_AP_filtered90
 colnames(viz_f90)<- sapply(strsplit(colnames(viz_f90),split="\\."), function(x) x[[length(x)]])
 viz_f90<-t(viz_f90) |> as.data.frame()
@@ -716,6 +778,10 @@ viz_f90[ do.call(order, viz_f90),]
 
 
 ```{r}
+#| label: partnerships
+#| dependson: viz_f90
+#| cache: true
+
 # mean IG = mean over all repeats
 # IG in repeat= max IG (median-discretized, zero-discretized)
 # partner in repeat= one with synergy
@@ -809,6 +875,10 @@ for (j in c(1:n_repeats) ){
 ```
 
 ```{r}
+#| label: partnership_freq
+#| dependson: partnerships
+#| cache: true
+
 rel_2D_named<- rel_2D
 colnames(rel_2D_named)<- sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
 freqs_pure2D<- colSums(rel_2D_named)
@@ -826,8 +896,10 @@ write.csv(freq_and_partners, file= "agp_2D_rel_freq&partnerships.csv")
 
 
 ```{r fig.width=7, fig.height=6}
+#| label: plot_partnership_freq
 
-
+library(ggplot2)
+library(reshape2)
 vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
 vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
 vpm0<- vpm0[, colSums(vpm0)>100]
@@ -841,6 +913,8 @@ ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
 
 
 ```{r fig.width=9, fig.height=6}
+#| label: plot_partnership_freq2
+library(matrixStats)
 
 vpm0<- partners_m0
 colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(x)]])
@@ -859,6 +933,7 @@ ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
 ###### jackknife estimates of statistics: IG, presence, abundance
 
 ```{r}
+#| label: jackSE_def 
 
 jackknife_SE<- function(replicates,N,D,R=NULL){
   if (is.null(R)) R= N/D
@@ -870,6 +945,10 @@ jackknife_SE<- function(replicates,N,D,R=NULL){
 
 
 ```{r}
+#| label: fs_df
+#| dependson: jackSE_def, partnership_freq
+#| cache: true
+
 for (v in names(global_MDFS))
   names(global_MDFS[[v]]$statistic)<- global_MDFS[[v]]$feature_names
 fs_df<- data.frame(taxon=plausible,
@@ -892,6 +971,7 @@ viz_fs_df[order(-viz_fs_df$IG2D) , ]
 ```
 
 ```{r}
+#| label: jack_check1
 
 plot(viz_fs_df$IG2D,colMeans(IG2D), 
      main=sprintf("IG2D- jackknife mean vs full data point estimate, \n cor= %.4f",
@@ -912,6 +992,7 @@ hist(IG1D[,10])
 ```
 
 ```{r}
+#| label: jack_check2
 ses<-list(
 se100=apply(IG2D[1:100,],2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
 se200=apply(IG2D[1:200,],2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
@@ -922,7 +1003,7 @@ se500=apply(IG2D[1:500,],2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(ta
 ```
 
 ```{r}
-
+#| label: jack_check3
 for (i in seq_along(ses))
   for (j in seq_along(ses))
     if (i<j)
@@ -933,6 +1014,9 @@ for (i in seq_along(ses))
 ```
 
 ```{r}
+#| label: pab_df
+#| dependson: fs_df
+#| cache: true
 taxonomy.mean.final<- taxonomy.mean.final/10000
 pab_df<- data.frame(taxon=plausible,
                         ab= colMeans(taxonomy.mean.final[,plausible]),
@@ -964,9 +1048,85 @@ viz_pab_df[order(-viz_fs_df$IG2D) , ]
 ```
 
 ```{r}
+#| label: save_dfs
+
 write.csv(
 cbind( viz_fs_df[order(-viz_fs_df$IG2D),],
        viz_pab_df[order(-viz_fs_df$IG2D) , 2:ncol(viz_pab_df) ]),
 file="agp_data_per_taxa.csv")
 
+```
+
+
+##### MDFS 3D test
+
+```{r}
+#| label: mdfs_3D_load
+#| cache: true
+
+MDFS3D<- readRDS("agp_result_3D.rds")
+
+```
+
+
+All confirmed taxa in 2D appear in 3D:
+
+```{r}
+#| label: intersections
+#| dependson: mdfs_3D_load, fs_df
+
+i=1;j=1;
+setSim=matrix(nrow=2,ncol=2)
+for (set1 in list( 
+union(MDFS3D$median$rel_set, MDFS3D$zero$rel_set),
+fs_df$taxon) ){for (set2 in list(
+  union(MDFS3D$median$rel_set, MDFS3D$zero$rel_set),
+fs_df$taxon
+)){
+      setSim[i,j]= length(intersect(set1,set2))
+      j=j+1;
+};i=i+1; j=1}
+
+setSim
+
+```
+
+
+
+```{r}
+#| label: diffs
+#| dependson: mdfs_3D_load, fs_df
+
+print("Maximum IG of 3D vars NOT in set of taxa selected at least 90% of times:")
+ setdiff( union(MDFS3D$median$rel_set, MDFS3D$zero$rel_set), fs_df$taxon)-> only3D
+max(
+c(
+ mapply(function(mdfs, restriction){
+    mdfs$statistic[ mdfs$feature_names %in% restriction ]
+ }, MDFS3D, list(only3D, only3D))
+) |> unlist()
+)
+```
+```{r}
+#| label: 3D_ig
+
+IG3D_med= data.frame(taxon= MDFS3D$median$feature_names,
+                     statisitc=MDFS3D$median$statistic)
+IG3D_zero= data.frame(taxon= MDFS3D$zero$feature_names,
+                     statisitc=MDFS3D$zero$statistic)
+IG3D_med<- IG3D_med[ IG3D_med$taxon %in% fs_df$taxon,  ]
+IG3D_zero<- IG3D_zero[ IG3D_zero$taxon %in% fs_df$taxon,  ]
+
+stopifnot(all(IG3D_med$taxon == IG3D_zero$taxon))
+
+data.frame(taxon=viz_fs_df$taxon,
+           IG3D= pmax(IG3D_med$statisitc, IG3D_zero$statisitc),
+           IG2D= viz_fs_df$IG2D
+           
+           )-> IG2Dv3D
+
+IG2Dv3D$IG_increase= IG2Dv3D$IG3D - IG2Dv3D$IG2D
+
+IG2Dv3D[order(-IG2Dv3D$IG_increase),]
+print(as.matrix(IG2Dv3D[order(-IG2Dv3D$IG_increase),]))
 ```
