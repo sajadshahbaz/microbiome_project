@@ -5,13 +5,23 @@ output:
   html_document:
     toc: true
     theme: united
-execute:
-  docker: 
-    batch_agp:latest
 ---
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#| label: library_load
+library(magrittr)
+library(matrixStats)
+library(MDFS)
+library(randomForest)
+library(pROC)
+library(reshape2)
+library(ggplot2)
+
 ```
 
 # Initial data preparation
@@ -41,7 +51,6 @@ metadata<-metadata[,-1]
 #| dependson: read_data
 #| cache: true
 
-library(magrittr)
 c("sex","height.cm","weight.kg","age.years")-> confounding_factors
 confounding_factors %in% colnames(metadata)
 metadata$sex[!(metadata$sex %in% c("male","female"))]<- NA
@@ -135,7 +144,6 @@ print(length(unique(metadata$host.subject.id)))
 #| cache: true
 y<- 1- metadata$allergic.to.i.have.no.food.allergies.that.i.know.of 
 names(y)<- rownames(metadata)
-library(matrixStats)
 
 ids<-metadata$host.subject.id
 names(ids)<-rownames(metadata)
@@ -244,7 +252,6 @@ fisher.test(rbind(table(meta.mean.final[decision.mean.final==0,5]),
 #| label: glob_MDFS 
 #| dependson: init_summary
 #| cache: true
-library(MDFS)
 source("FS_functions.R")
 global_MDFS<-MDFS_FS(X= taxonomy.mean.final,
         y= decision.mean.final,lvl = 0.05,seed = 123,mc=30  )
@@ -332,11 +339,9 @@ Detailed steps of MDFS pipeline implemented in `MDFS_FS()` function are describe
 #| cache: true
 subsample<- readRDS("agp_subsamples63.rds")
 n_repeats=500
-library(MDFS)
 source("FS_functions.R")
 features_file_string="features/agp_features_selected_lop=%.2f.rds"
 lop= 0.37 #leave out percentage
-library(randomForest)
 
 #if feature selection was not performed yet, set up the lists
 fs_fname=sprintf(features_file_string,lop)
@@ -441,7 +446,6 @@ for (j in 1:n_repeats){
 #| label: performance
 #| dependson: compute
 #| cache: true
-library(pROC)
 n_repeats=500
 #n_repeats=30
 source("balanced_decision.R")
@@ -573,7 +577,6 @@ names(METHODxROC)<- sapply(seq_along(METHODxROC),
                                      AUCxROC[[m]]))
          
 #pdf("roc_curve_v2.pdf", width=8,height=5)
-library(ggplot2)
 ggroc(METHODxROC, legacy.axes = T,aes=c("color"),lwd=0.75) +
 geom_abline(slope = 1 ,intercept = 0, linetype="dashed") + # add identity line
 theme(
@@ -658,7 +661,6 @@ cat("x")
 #| label: synthetic_auc
 #| dependson: synthetic
 #| cache: true
-library(pROC)
 auc_from_rf<- function(rf,y_train){
  as.numeric( auc(response=y_train, predictor= rf$votes[,2]))
 }
@@ -692,7 +694,6 @@ if (!file.exists("performance_agp.rds")) saveRDS(performance, "performance_agp.r
 #| cache: true
 
 #install.packages("reshape2")
-library(reshape2)
 long_perf <- melt(performance, 
                   varnames = c("Method", "Metric", "Repeat"), value.name = "Value")
 
@@ -708,8 +709,6 @@ long_perf <- melt(performance,
 #| cache: true
 
 #install.packages("ggplot2")
-library(ggplot2)
-#library(dplyr)
 #summary_lines <- long_perf %>%
 #  group_by(Metric, Method) %>%
 #  summarise(
@@ -898,8 +897,6 @@ write.csv(freq_and_partners, file= "agp_2D_rel_freq&partnerships.csv")
 ```{r fig.width=7, fig.height=6}
 #| label: plot_partnership_freq
 
-library(ggplot2)
-library(reshape2)
 vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
 vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
 vpm0<- vpm0[, colSums(vpm0)>100]
@@ -914,7 +911,6 @@ ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
 
 ```{r fig.width=9, fig.height=6}
 #| label: plot_partnership_freq2
-library(matrixStats)
 
 vpm0<- partners_m0
 colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(x)]])
