@@ -49,19 +49,11 @@ print(nrow(tdata))
   taxa_min_lib_size= 3636 
   crit_rank= which.min(abs(lib_sizes[size_order] - taxa_min_lib_size))
 
-  plot(shannon_div[size_order],type='l')
-  abline(v = crit_rank, col="red",lwd=2) 
-  plot(simpson_index[size_order],type='l')
-  abline(v = crit_rank, col="red",lwd=2) 
-  plot(inverse_simp[size_order],type='l')
-  abline(v = crit_rank, col="red",lwd=2) 
 
 
   tdata<- tdata[ rowSums(tdata) >= taxa_min_lib_size, ]
   tdata<- tdata/rowSums(tdata)
 
-y<- 1- metadata$allergic.to.i.have.no.food.allergies.that.i.know.of 
-names(y)<- rownames(metadata)
 
 ids<-metadata$host.subject.id
 names(ids)<-rownames(metadata)
@@ -76,6 +68,8 @@ print(length(common_names))
 print("# of unique donors")
 print(length(unique(metadata$host.subject.id)))
 source("subsample_nonrepeating_donors.R")
+y<- 1- metadata$allergic.to.i.have.no.food.allergies.that.i.know.of 
+names(y)<- rownames(metadata)
 host_id<- metadata$host.subject.id
 names(host_id)<- rownames(metadata)
 subsample<-list()
@@ -86,6 +80,7 @@ for (i in 1:n_repeats){
   p_idx<-sample(1:length(y), length(y), replace=FALSE)
   y_p<-y
   y_p[]<- y[p_idx]
+  print(sprintf("len(y_p)=%d,len(y)=%d,nrow(tdata)=%d",length(y_p),length(y),nrow(tdata)))
   subsample_donors(taxonomy=tdata, disease=y_p,
                    host_id=host_id,
                    subsampleSize = 0.63,

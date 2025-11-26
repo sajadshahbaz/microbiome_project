@@ -1058,6 +1058,7 @@ file="agp_data_per_taxa.csv")
 
 ```{r}
 #| label: mdfs_3D_load
+#| dependson: agp_result_3D.rds
 #| cache: true
 
 MDFS3D<- readRDS("agp_result_3D.rds")
@@ -1069,6 +1070,7 @@ All confirmed taxa in 2D appear in 3D:
 
 ```{r}
 #| label: intersections
+#| cache: true
 #| dependson: mdfs_3D_load, fs_df
 
 i=1;j=1;
@@ -1091,6 +1093,7 @@ setSim
 
 ```{r}
 #| label: diffs
+#| cache: true
 #| dependson: mdfs_3D_load, fs_df
 
 print("Maximum IG of 3D vars NOT in set of taxa selected at least 90% of times:")
@@ -1105,6 +1108,8 @@ c(
 ```
 ```{r}
 #| label: 3D_ig
+#| cache: true
+#| dependson: mdfs_3D_load, fs_df
 
 IG3D_med= data.frame(taxon= MDFS3D$median$feature_names,
                      statisitc=MDFS3D$median$statistic)
@@ -1125,4 +1130,97 @@ IG2Dv3D$IG_increase= IG2Dv3D$IG3D - IG2Dv3D$IG2D
 
 IG2Dv3D[order(-IG2Dv3D$IG_increase),]
 print(as.matrix(IG2Dv3D[order(-IG2Dv3D$IG_increase),]))
+```
+
+
+
+```{r}
+#| label: matching_triplets
+#| cache: true
+#| dependson: 3D_ig, fs_df
+
+min(MDFS3D$median$statistic[MDFS3D$median$relevant.variables])
+min(MDFS3D$zero$statistic[MDFS3D$zero$relevant.variables])
+
+```
+
+##### Permutation test
+
+Performed by `permutation_test.R` script - same basic steps of repeated subsampling 500 times and feature selection, but with decision labels permuted each time before sampling happens. 
+This allows us to assess, independently of our testing method, the false positive rate of feature selection for all of the tested methods.
+
+
+```{r}
+#| label: perm_test_load
+#| cache: true
+#| dependson: agp_subsamples63_perm.rds
+
+n_perm<-500
+perm_subsample<-readRDS('agp_subsamples63_perm.rds')
+lop= 0.37 #leave out percentage
+perm_features<- list(md1D=list(),
+                md12D=list(),
+                md12Dp=list(),
+                u=list()
+                )
+
+perm_fs_j_pattern="features/perm_agp_fs_set_j=%d_lop=%.2f.rds"
+ perm_full_MDFSres<- perm_full_Ures<-list()
+for (j in 1:n_perm){
+  fs_j_fname= sprintf(perm_fs_j_pattern,j,lop)
+  stopifnot(file.exists(fs_j_fname))
+        fs_j=readRDS(fs_j_fname)
+        all_mdfs_j=fs_j$mdfs
+        u_j=fs_j$u
+  perm_full_MDFSres[[j]]=all_mdfs_j
+  perm_full_Ures[[j]]=u_j
+  perm_features$u[[j]]=u_j$rel_set
+  perm_features$md1D[[j]]=union(all_mdfs_j$res_1Dm$rel_set, all_mdfs_j$res_1D0$rel_set)
+  perm_features$md12D[[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$rel_set, 
+					all_mdfs_j$res_2D0$rel_set,
+					perm_features$md1D[[j]]))
+  perm_features$md12Dp[[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$partner_set, 
+					all_mdfs_j$res_2D0$partner_set,
+					perm_features$md12D[[j]]))
+}
+
+```
+
+```{r}
+eFPR<- list(md1D0=vector(), 
+	 md1Dm=vector(),
+	 md2Dm=vector(),
+	 md2D0=vector(),
+	 u=vector())
+for (j in 1:n_perm) {
+eFPR[['md1D0']][[j]]=length(perm_full_MDFSres[[j]]$res_1D0$rel_set)/length(perm_full_MDFSres[[j]]$res_1D0$feature_names)
+eFPR[['md1Dm']][[j]]=length(perm_full_MDFSres[[j]]$res_1Dm$rel_set)/length(perm_full_MDFSres[[j]]$res_1Dm$feature_names)
+eFPR[['md2D0']][[j]]=length(perm_full_MDFSres[[j]]$res_2D0$rel_set)/length(perm_full_MDFSres[[j]]$res_2D0$feature_names)
+eFPR[['md2Dm']][[j]]=length(perm_full_MDFSres[[j]]$res_2Dm$rel_set)/length(perm_full_MDFSres[[j]]$res_2Dm$feature_names)
+eFPR[['u']][[j]]=length(perm_full_Ures[[j]]$rel_set)/length(perm_full_MDFSres[[j]]$res_1D0$feature_names) #same filtering on sparsity in U_test
+}
+
+```
+
+```{r}
+for (name in names(eFPR))
+hist(eFPR[[name]], main=name)
+```
+
+
+```{r}
+max_permIG<- data.frame(IG1D= lapply(perm_full_MDFSres, function(x) max(max(x$res_1D0$statistic), x$res_1Dm$statistic))|>unlist(),
+		        IG2D= lapply(perm_full_MDFSres, function(x) max(max(x$res_2D0$statistic), x$res_2Dm$statistic))|>unlist(),
+			IG_increase= lapply(perm_full_MDFSres, function(x) 
+					     max(max(x$res_2Dm$statistic- x$res_1Dm$statistic),
+						 max(x$res_2Dm$statistic- x$res_1Dm$statistic)
+					        )
+					    )|>unlist()
+			)
+
+```
+
+```{r}
+for (name in names(max_permIG))
+ hist(max_permIG[[name]],main=sprintf("maximum %s - distribution over permutations", name))
 ```
