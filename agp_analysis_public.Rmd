@@ -1224,3 +1224,102 @@ max_permIG<- data.frame(IG1D= lapply(perm_full_MDFSres, function(x) max(max(x$re
 for (name in names(max_permIG))
  hist(max_permIG[[name]],main=sprintf("maximum %s - distribution over permutations", name))
 ```
+
+```{r}
+Reduce(rbind, 
+       lapply(perm_subsample, function(x)
+x$p_idx  )
+       )-> permutations
+permutations<- as.data.frame(permutations)
+nrow(permutations[!duplicated(permutations),])
+```
+
+
+```{r}
+named_IG<- function(mdfs_result){
+ ig<-mdfs_result$statistic
+ names(ig)<-mdfs_result$feature_names
+}
+nS_gt_thr<- function(thr, S){
+ length(S) - findInterval(sort(thr),sort(S))
+}
+mean_subsampleIG1D<-colMeans(IG1D)
+mean_subsampleIG2D<-colMeans(IG2D)
+meanIG1Dorder<-order(mean_subsampleIG1D)
+meanIG2Dorder<-order(mean_subsampleIG2D)
+n_perm_gt_IG1D0<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG1D))
+n_perm_gt_IG1Dm<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG1D))
+n_perm_gt_IG2D0<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG2D))
+n_perm_gt_IG2Dm<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG2D))
+for (j in 1:n_perm){
+ if (j%%50==0) message(sprintf("%d /%d",j,n_perm))
+ n_perm_gt_IG1D0[j,]<- nS_gt_thr(thr=mean_subsampleIG1D, S=perm_full_MDFSres[[j]]$res_1D0$statistic)
+ n_perm_gt_IG1Dm[j,]<- nS_gt_thr(thr=mean_subsampleIG1D, S=perm_full_MDFSres[[j]]$res_1Dm$statistic)
+ n_perm_gt_IG2D0[j,]<- nS_gt_thr(thr=mean_subsampleIG2D, S=perm_full_MDFSres[[j]]$res_2D0$statistic)
+ n_perm_gt_IG2Dm[j,]<- nS_gt_thr(thr=mean_subsampleIG2D, S=perm_full_MDFSres[[j]]$res_2Dm$statistic)
+}
+```
+
+```{r}
+plot_survival_function<- function( Y, #n_reps x length(x)
+		       x, critical_x, crit_x_annot=NULL,
+		       ...){
+ m<- colMeans(Y)
+ sd<- apply(Y,2,sd)
+ upper<- m+ sd
+ lower<- m - sd
+
+ plot(x, m, type="b", lwd=2, col="black",
+      ylim= range(Y),
+      ...)
+ polygon(c(x,rev(x)),
+	 c(upper,rev(lower)),
+	 border=NA, col=rgb(0,0,1,0.25))
+ abline(v=critical_x, lwd=2, col="red")
+ if (!is.null(crit_x_annot)) legend("topright", lwd=2, col="red", legend=crit_x_annot)
+}
+pdf("n_perm_IG_gt_threshold.pdf")
+plot_survival_function( n_perm_gt_IG1D0, sort(mean_subsampleIG1D), 
+			critical_x= min(mean_subsampleIG1D[ fs_df$rel_1D >= 450 ]),
+			crit_x_annot= 'min IG1D \n (confirmed)',
+		       log='x', 
+		       main='# variables with perm_IG > IG[i] \n 1D0',
+		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
+		       ylab='# perm_IG > IG[i]')
+
+plot_survival_function( n_perm_gt_IG1Dm, sort(mean_subsampleIG1D), log='x', 
+			critical_x= min(mean_subsampleIG1D[ fs_df$rel_1D >= 450 ]),
+			crit_x_annot= 'min IG1D \n (confirmed)',
+		       main='# variables with perm_IG > IG[i] \n 1Dm',
+		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
+		       ylab='# perm_IG > IG[i]')
+
+plot_survival_function( n_perm_gt_IG2D0, sort(mean_subsampleIG2D), log='x', 
+			critical_x= min(mean_subsampleIG2D[ fs_df$rel_2D >= 450 ]),
+			crit_x_annot= 'min IG2D \n (confirmed)',
+		       main='# variables with perm_IG > IG[i] \n 2D0',
+		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
+		       ylab='# perm_IG > IG[i]')
+
+plot_survival_function( n_perm_gt_IG2Dm, sort(mean_subsampleIG2D), log='x', 
+			critical_x= min(mean_subsampleIG2D[ fs_df$rel_2D >= 450 ]),
+			crit_x_annot= 'min IG2D \n (confirmed)',
+		       main='# variables with perm_IG > IG[i] \n 2Dm',
+		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
+		       ylab='# perm_IG > IG[i]')
+dev.off()
+```
+
+```{r}
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+
+
+```
