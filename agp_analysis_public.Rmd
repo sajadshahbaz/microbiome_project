@@ -449,7 +449,7 @@ for (j in 1:n_repeats){
 n_repeats=500
 #n_repeats=30
 source("balanced_decision.R")
-METHODS=c(names(features),"md12DpInt")
+METHODS=c(names(features))
 METRICS=c("AUC","OR")
 odds_ratio<- function(y_pred, y){
  # if(length(unique(y_pred))<2){
@@ -534,6 +534,7 @@ for (j in 1:n_repeats){
 #| label: roc
 #| dependson: performance
 #| cache: true
+  model_file_string="RF_models/agp_j=%d_fs=%s_lop=%.2f.rds"
 
 set.seed(644545)
 r=sample.int(n_repeats,size = 1)
@@ -1156,6 +1157,7 @@ This allows us to assess, independently of our testing method, the false positiv
 #| dependson: agp_subsamples63_perm.rds
 
 n_perm<-500
+
 perm_subsample<-readRDS('agp_subsamples63_perm.rds')
 lop= 0.37 #leave out percentage
 perm_features<- list(md1D=list(),
@@ -1187,6 +1189,101 @@ for (j in 1:n_perm){
 ```
 
 ```{r}
+for (x in perm_full_MDFSres)
+	print(x$res_1D0$statistic[ grep("g__Neisseria$",x$res_1D0$feature_names) ]==
+		x$res_1Dm$statistic[ grep("g__Neisseria$",x$res_1Dm$feature_names) ])
+
+```
+
+
+```{r}
+someidx<-30
+print(sprintf("some real example: "))
+table(y_real=y[ subsample[[someidx]]$keep ])
+
+tmptaxa<- tdata
+colnames(tmptaxa)<- sapply(strsplit(colnames(tmptaxa),"\\."), function(x) x[[length(x)]])
+
+print(as.data.frame(do.call(table,c( 
+	binarize_taxa(tmptaxa[subsample[[someidx]]$keep,
+     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
+	thresholds=rep(0,2)) |> as.data.frame() |> as.list(),
+ list( y_real=y[ subsample[[someidx]]$keep ]) )
+)))
+set.seed(212)
+for (someidx in sample(1:500,5,replace=FALSE)){
+	print(sprintf("permutation #%d :", someidx))
+yp<- y
+yp[] <- y [ perm_subsample[[someidx]]$p_idx ]
+print(table(y_permuted=yp[ perm_subsample[[someidx]]$keep ]))
+print("y_permuted vs y:")
+print(table(y_real=y[ subsample[[someidx]]$keep ] , y_permuted=yp[ perm_subsample[[someidx]]$keep ] ))
+print(as.data.frame(do.call(table,c( 
+	binarize_taxa(tmptaxa[perm_subsample[[someidx]]$keep,
+     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
+	thresholds=rep(0,2)) |> as.data.frame() |> as.list(),
+ list( y_permuted=yp[ perm_subsample[[someidx]]$keep ]) )
+)))
+}
+
+```
+
+```{r}
+someidx<-30
+print(sprintf("some real example: "))
+table(y_real=y[ subsample[[someidx]]$keep ])
+
+tmptaxa<- tdata
+colnames(tmptaxa)<- sapply(strsplit(colnames(tmptaxa),"\\."), function(x) x[[length(x)]])
+
+print(as.data.frame(do.call(table,c( 
+	binarize_taxa(tmptaxa[subsample[[someidx]]$keep,
+     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
+	thresholds=colMedians(tmptaxa[subsample[[someidx]]$keep,
+     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))] |> as.matrix()
+			      )) |> as.data.frame() |> as.list(),
+ list( y_real=y[ subsample[[someidx]]$keep ]) )
+)))
+print(sprintf("IG({Y, Berg}+={Neiss})=%.3f", full_MDFSres[[someidx]]$res_2Dm$statistic[ 
+						grep("g__Neisseria$",full_MDFSres[[someidx]]$res_2Dm$feature_names)
+	      					] ))
+print(ComputeMaxInfoGainsDiscrete(data=binarize_taxa(tmptaxa[subsample[[someidx]]$keep,],
+	thresholds=colMedians(tmptaxa[subsample[[someidx]]$keep,
+			      ] |> as.matrix()
+	                     )), decision=yp[ subsample[[someidx]]$keep], dimensions=2)[
+		grep("g__Neisseria$", colnames(tmptaxa)),
+])
+set.seed(212)
+for (someidx in sample(1:500,5,replace=FALSE)){
+	print(sprintf("permutation #%d :", someidx))
+yp<- y
+yp[] <- y [ perm_subsample[[someidx]]$p_idx ]
+print(table(y_permuted=yp[ perm_subsample[[someidx]]$keep ]))
+print("y_permuted vs y:")
+print(table(y_real=y[ subsample[[someidx]]$keep ] , y_permuted=yp[ perm_subsample[[someidx]]$keep ] ))
+print(as.data.frame(do.call(table,c( 
+	binarize_taxa(tmptaxa[perm_subsample[[someidx]]$keep,
+     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
+	thresholds=colMedians(tmptaxa[perm_subsample[[someidx]]$keep,
+			      grep(c("g__Neisseria$|g__Bergeyella$"),colnames(tmptaxa))] |> as.matrix()
+	                     ))|> as.data.frame() |> as.list(),
+ list( y_permuted=yp[ perm_subsample[[someidx]]$keep ]) )
+)))
+print(sprintf("IG({Y, Berg}+={Neiss})=%.3f", perm_full_MDFSres[[someidx]]$res_2Dm$statistic[ 
+						grep("g__Neisseria$",perm_full_MDFSres[[someidx]]$res_2Dm$feature_names)
+	      					] ))
+print(ComputeMaxInfoGainsDiscrete(data=binarize_taxa(tmptaxa[perm_subsample[[someidx]]$keep,],
+	thresholds=colMedians(tmptaxa[perm_subsample[[someidx]]$keep,
+			      ] |> as.matrix()
+	                     )), decision=yp[ perm_subsample[[someidx]]$keep], dimensions=2)[
+		grep("g__Neisseria$", colnames(tmptaxa)),
+])
+}
+
+
+```
+
+```{r}
 eFPR<- list(md1D0=vector(), 
 	 md1Dm=vector(),
 	 md2Dm=vector(),
@@ -1209,8 +1306,8 @@ hist(eFPR[[name]], main=name)
 
 
 ```{r}
-max_permIG<- data.frame(IG1D= lapply(perm_full_MDFSres, function(x) max(max(x$res_1D0$statistic), x$res_1Dm$statistic))|>unlist(),
-		        IG2D= lapply(perm_full_MDFSres, function(x) max(max(x$res_2D0$statistic), x$res_2Dm$statistic))|>unlist(),
+max_permIG<- data.frame(IG1D= lapply(perm_full_MDFSres, function(x) max(max(x$res_1D0$statistic), max(x$res_1Dm$statistic)))|>unlist(),
+		        IG2D= lapply(perm_full_MDFSres, function(x) max(max(x$res_2D0$statistic), max(x$res_2Dm$statistic)))|>unlist(),
 			IG_increase= lapply(perm_full_MDFSres, function(x) 
 					     max(max(x$res_2Dm$statistic- x$res_1Dm$statistic),
 						 max(x$res_2Dm$statistic- x$res_1Dm$statistic)
@@ -1312,14 +1409,119 @@ dev.off()
 
 ```{r}
 
+c("res_1Dm", "res_2Dm", "res_1D0", "res_2D0")-> variant_names
+
+perm_IGranks<- lapply(variant_names,
+		      function(vn){
+			     lapply(perm_full_MDFSres, function(x)
+				     data.frame(taxon=x[[vn]]$feature_names,
+					   IG=x[[vn]]$statistic) 
+				     )
+		      })
+
+names(perm_IGranks)<-variant_names
+pdf("perm_IG_ranks.pdf")
+for (vn in variant_names){
+	plot(rank(perm_IGranks[[vn]][[1]]$IG),
+	     perm_IGranks[[vn]][[1]]$IG,
+	      pch=16, cex=0.3,col=rgb(0,0,0,0.3),
+	main=sprintf("%s - distribution of k-th largest IG over permuations",vn),
+	xlab="rank(IG_perm)", ylab="IG_perm")
+	for (j in 2:length(perm_IGranks[[vn]]))
+		points(rank(perm_IGranks[[vn]][[j]]$IG),
+			perm_IGranks[[vn]][[j]]$IG,
+	      pch=16, cex=0.3, col=rgb(0,0,0,0.3))
+	if (vn %in% c("res_2D0", "res_2Dm")){
+	abline(h= min(mean_subsampleIG2D[ fs_df$rel_2D >= 450 ]), lwd=3,col="red")
+	legend("topleft", lwd=3, col="red", legend="min 2D IG confirmed \n (jackknife mean)")
+	} else {
+	abline(h= min(mean_subsampleIG1D[ fs_df$rel_1D >= 450 ]), lwd=3,col="red")
+	legend("topleft", lwd=3, col="red", legend="min 1D IG confirmed \n (jackknife mean)")
+	}
+}
+dev.off()
+
 ```
+
 
 ```{r}
 
 
+all_the_taxa_permTest<-Reduce(union,lapply(perm_IGranks, function(x) Reduce(union,lapply(x, function(y) y$taxon))))
+
+```
+
+
+```{r}
+k=35
+F<-lapply(variant_names, function(x) matrix(0, nrow=length(all_the_taxa_permTest),
+	   ncol=k))
+names(F)<-variant_names
+for (i in seq_along(F)) rownames(F[[i]])<-all_the_taxa_permTest
+for (vn in variant_names) for (j in 1:n_perm){
+	top_k_idx<- order(perm_IGranks[[vn]][[j]]$IG, decreasing=TRUE)[1:k]
+	top_k_taxa<-perm_IGranks[[vn]][[j]]$taxon[top_k_idx]
+	for (k_i in 1:k){
+	F[[vn]][ top_k_taxa[[k_i]],k_i   ]=   F[[vn]][ top_k_taxa[[k_i]],k_i   ] + 1
+	}
+}
+
+
+```
+
+
+```{r}
+vn<- variant_names[[1]]
+pdf("rank_frequency_perm.pdf", width=14,height=7)
+for (vn in variant_names){
+F_v<-	F[[vn]][ order(-rowSums(F[[vn]])), ]
+rownames(F_v)<- sapply(strsplit(rownames(F_v),"\\."), function(x) x[[length(x)]])
+F_v<- F_v[1:35,1:10]
+F_v_flat<-melt(F_v)
+colnames(F_v_flat)<- c("taxon", "top_k","freq")
+myplot<-ggplot(F_v_flat, aes(x= taxon, y=top_k, fill=freq)) + geom_tile()+
+   ggtitle(sprintf("%s - frequency of having top_k highest IG in permuatations",vn))+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))+
+    geom_text(aes(label = freq), color = "pink")
+    #ggsave(sprintf("%s_rankFreq_perm.pdf",vn),myplot,width=14,height=7,units="in")
+    print(myplot)
+}
+dev.off()
 ```
 
 ```{r}
+plausible_perm_IG<- lapply(variant_names, function(vn)
+		      matrix(NA,nrow=n_perm, ncol=length(plausible)))
+names(plausible_perm_IG)<- variant_names
+for (vn in variant_names) colnames(plausible_perm_IG[[vn]])<- plausible
+for (vn in variant_names) for (j in 1:n_perm){
+	perm_IGranks[[vn]][[j]]$IG-> temp
+	names(temp)<- perm_IGranks[[vn]][[j]]$taxon
+	plausible_perm_IG[[vn]][j, ]= temp[ plausible ]
+}
+```
 
+
+```{r}
+
+for (vn in variant_names) colnames(plausible_perm_IG[[vn]])<- sapply(strsplit(plausible,"\\."), function(x) x[[length(x)]])
+
+pdf("IGperm_histograms_plausible.pdf")
+
+for (ptaxa in colnames(plausible_perm_IG[[1]]))
+	for (vn in variant_names)
+		hist(plausible_perm_IG[[vn]][,ptaxa], main= sprintf("perm_IG of %s - %s", ptaxa, vn))
+
+dev.off()
 
 ```
+
+
+```{r}
+
+lapply(plausible_perm_IG, function(x) colnames(x))
+
+```
+
+
+
