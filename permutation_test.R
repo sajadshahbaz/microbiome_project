@@ -120,7 +120,7 @@ fs_j_pattern="features/perm_agp_fs_set_j=%d_lop=%.2f.rds"
 for (j in 1:n_repeats){
   y_p<-y
   p_idx<- subsample[[j]]$p_idx #permutation index
-  y_p<- y[p_idx] #permuted decision
+  y_p[]<- y[p_idx] #permuted decision
   fs_j_fname= sprintf(fs_j_pattern,j,lop)
   if(!file.exists(fs_j_fname)){
     message(fs_j_fname)
