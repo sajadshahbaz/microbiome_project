@@ -1300,8 +1300,10 @@ eFPR[['u']][[j]]=length(perm_full_Ures[[j]]$rel_set)/length(perm_full_MDFSres[[j
 ```
 
 ```{r}
+pdf("empirical_FPR.pdf")
 for (name in names(eFPR))
 hist(eFPR[[name]], main=name)
+dev.off()
 ```
 
 
@@ -1318,8 +1320,10 @@ max_permIG<- data.frame(IG1D= lapply(perm_full_MDFSres, function(x) max(max(x$re
 ```
 
 ```{r}
+pdf("max_perm_IG.pdf")
 for (name in names(max_permIG))
  hist(max_permIG[[name]],main=sprintf("maximum %s - distribution over permutations", name))
+dev.off()
 ```
 
 ```{r}
@@ -1519,7 +1523,6 @@ dev.off()
 
 ```{r}
 
-lapply(plausible_perm_IG, function(x) colnames(x))
 
 ```
 
