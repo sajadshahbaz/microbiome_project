@@ -528,38 +528,48 @@ for (j in 1:n_repeats){
 
 ```
 
-##### One randomly selected repetition
+##### Overall performance (median dataset ROC curve)
 
 ```{r}
 #| label: roc
 #| dependson: performance
 #| cache: true
-  model_file_string="RF_models/agp_j=%d_fs=%s_lop=%.2f.rds"
 
-set.seed(644545)
-r=sample.int(n_repeats,size = 1)
-print(r)
+
 METHODxROC=list()
 AUCxROC=list()
 CONFxMETHOD=list()
 ORxMETHOD=list()
+
+set.seed(644545)
+seeds_glob=sample.int(213212,4,replace=FALSE)
+names(seeds_glob)= METHODS[1:4]
 for (METHOD in METHODS[1:4]){
-fname=sprintf(model_file_string,r,METHOD,lop)
-RF_mdl<- readRDS(fname)
-no_features<- (length(RF_mdl)==1)
-stopifnot(!no_features)
-    f_key= if (METHOD %in% names(features)) METHOD else "md12Dp"
-    X_test<- tdata[ subsample[[r]]$leave, ,drop=FALSE]
-    X_rf<- X_test[, features[[f_key]][[r]], drop=FALSE ]
-    test_pred= predict(RF_mdl, newdata=  X_rf,
-                      type="prob"  )[,2]
+if (METHOD=='u') sel_feats<- global_U$rel_set
+if (METHOD=='md1D') sel_feats<- union(global_MDFS$res_1Dm$rel_set, 
+					global_MDFS$res_1D0$rel_set) 
+if (METHOD=='md12D') sel_feats<- Reduce(union, list(global_MDFS$res_2Dm$rel_set, 
+					global_MDFS$res_1Dm$rel_set, 
+					global_MDFS$res_1D0$rel_set, 
+					global_MDFS$res_2D0$rel_set)) 
+if (METHOD=='md12Dp') sel_feats<- Reduce(union,list(global_MDFS$res_2Dm$rel_set, 
+					global_MDFS$res_1Dm$rel_set, 
+					global_MDFS$res_1D0$rel_set, 
+					global_MDFS$res_2D0$rel_set,
+					global_MDFS$res_2D0$partner_set,
+					global_MDFS$res_2Dm$partner_set
+					)) 
+
+set.seed(seeds_glob[[METHOD]])
+RF_mdl<- randomForest(x=taxonomy.mean.final[,sel_feats],
+		      y= decision.mean.final |> as.factor() )
     y_thr= balanced.decision(x = RF_mdl$votes[,2],
-                             y= y[   subsample[[r]]$keep ] )$threshold
-    y_pbin<- (test_pred >= y_thr)
-    CONFxMETHOD[[METHOD]]==table(Predicted=as.numeric(y_pbin),Actual= y[   subsample[[r]]$leave ] )
-    ORxMETHOD[[METHOD]]=odds_ratio(y_pred = y_pbin,y = y[ subsample[[r]]$leave])
-    roc_curve=roc(response=y[   subsample[[r]]$leave ],
-        predictor=test_pred,quiet=TRUE)
+                             y= decision.mean.final )$threshold
+    y_pbin<- (RF_mdl$votes[,2] >= y_thr)
+    CONFxMETHOD[[METHOD]]=table(Predicted=as.numeric(y_pbin),Actual= decision.mean.final)
+    ORxMETHOD[[METHOD]]=odds_ratio(y_pred = y_pbin,y = decision.mean.final)
+    roc_curve=roc(response=decision.mean.final,
+        predictor=RF_mdl$votes[,2],quiet=TRUE)
 METHODxROC[[METHOD]]= roc_curve
 AUCxROC[[METHOD]]= auc(roc_curve)
 }
@@ -594,7 +604,79 @@ scale_y_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
   ggtitle("Feature Selection + RF: ROC comparison") +# theme(legend.position = "left")
   scale_color_discrete(name = "FS method") +
    guides(color = guide_legend(override.aes = list(lwd = 5)))
+for (m in METHODS[1:4]){
+	print(m)
+	print(CONFxMETHOD[[m]])
+	print(sprintf("OR=%.3f ",ORxMETHOD[[m]]))
+}
 #dev.off()
+```
+
+```{r}
+#  model_file_string="RF_models/agp_j=%d_fs=%s_lop=%.2f.rds"
+#global_MDFS<-MDFS_FS(X= taxonomy.mean.final,
+#        y= decision.mean.final,lvl = 0.05,seed = 123,mc=30  )
+#global_U<- U_test_FS(X=taxonomy.mean.final, y=decision.mean.final, lvl=0.05, min_presence=30)
+#
+#set.seed(644545)
+#r=sample.int(n_repeats,size = 1)
+#print(r)
+#METHODxROC=list()
+#AUCxROC=list()
+#CONFxMETHOD=list()
+#ORxMETHOD=list()
+#for (METHOD in METHODS[1:4]){
+#fname=sprintf(model_file_string,r,METHOD,lop)
+#RF_mdl<- readRDS(fname)
+#no_features<- (length(RF_mdl)==1)
+#stopifnot(!no_features)
+#    f_key= if (METHOD %in% names(features)) METHOD else "md12Dp"
+#    X_test<- tdata[ subsample[[r]]$leave, ,drop=FALSE]
+#    X_rf<- X_test[, features[[f_key]][[r]], drop=FALSE ]
+#    test_pred= predict(RF_mdl, newdata=  X_rf,
+#                      type="prob"  )[,2]
+#    y_thr= balanced.decision(x = RF_mdl$votes[,2],
+#                             y= y[   subsample[[r]]$keep ] )$threshold
+#    y_pbin<- (test_pred >= y_thr)
+#    CONFxMETHOD[[METHOD]]==table(Predicted=as.numeric(y_pbin),Actual= y[   subsample[[r]]$leave ] )
+#    ORxMETHOD[[METHOD]]=odds_ratio(y_pred = y_pbin,y = y[ subsample[[r]]$leave])
+#    roc_curve=roc(response=y[   subsample[[r]]$leave ],
+#        predictor=test_pred,quiet=TRUE)
+#METHODxROC[[METHOD]]= roc_curve
+#AUCxROC[[METHOD]]= auc(roc_curve)
+#}
+#names(METHODxROC)<- c("MDFS-1D","MDFS-2D", "MDFS-2D + partners", "U-test")
+#
+#for (i_nm in seq_along(names(METHODxROC)))
+#  for (i_nm2 in seq_along(names(METHODxROC)))
+#    if (i_nm<i_nm2) { nm<- names(METHODxROC)[[i_nm]]; nm2<- names(METHODxROC)[[i_nm2]] 
+#      print(sprintf("%s vs %s", nm,nm2))
+#    print(roc.test(METHODxROC[[nm]], METHODxROC[[nm2]]))
+#    }
+#names(METHODxROC)<- sapply(seq_along(METHODxROC),
+#                           function(m)
+#                             sprintf("%s, AUC=%.2f",
+#                                     names(METHODxROC)[[m]],
+#                                     AUCxROC[[m]]))
+#         
+##pdf("roc_curve_v2.pdf", width=8,height=5)
+#ggroc(METHODxROC, legacy.axes = T,aes=c("color"),lwd=0.75) +
+#geom_abline(slope = 1 ,intercept = 0, linetype="dashed") + # add identity line
+#theme(
+#panel.background = element_blank(),
+#axis.title.x = element_text(size =18, face = 'bold'),
+#axis.title.y = element_text(size =18, face = 'bold'),
+#panel.border = element_rect(size = 2, fill = NA),
+#axis.text.x = element_text(size = 14, face ='bold'),
+#axis.text.y = element_text(size = 14, face ='bold')) +
+#xlab('100% - Specificity') +
+#ylab('Sensitivity') +
+#scale_x_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
+#scale_y_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
+#  ggtitle("Feature Selection + RF: ROC comparison") +# theme(legend.position = "left")
+#  scale_color_discrete(name = "FS method") +
+#   guides(color = guide_legend(override.aes = list(lwd = 5)))
+##dev.off()
 ```
 
 
@@ -604,55 +686,55 @@ scale_y_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
 #| label: synthetic
 #| dependson: roc
 #| cache: true
-pairs<-rbind(
-cbind(full_MDFSres[[r]]$res_2Dm$interaction_data$rel_name,
-full_MDFSres[[r]]$res_2Dm$interaction_data$partner_name),
-cbind(full_MDFSres[[r]]$res_2D0$interaction_data$rel_name,
-full_MDFSres[[r]]$res_2D0$interaction_data$partner_name))
-METHOD="md12pInt"
-    f_key= if (METHOD %in% names(features)) METHOD else "md12Dp"
-    X_test<- tdata[ subsample[[r]]$leave, ,drop=FALSE]
-    X_train<- tdata[ subsample[[r]]$keep, ,drop=FALSE]
-    X_rf_train<- X_train[, features[[f_key]][[r]], drop=FALSE ]
-    X_rf_test<- X_test[, features[[f_key]][[r]], drop=FALSE ]
-synthetic_variables<- function(data, pairs, pairwise_fun){
- apply(pairs,1,function(ROW) pairwise_fun(rank(data[, ROW[[1]] ]), rank(data[, ROW[[2]] ])),
-       simplify=FALSE) |> as.data.frame()
-}
-S_trainPlus<-synthetic_variables(X_rf_train, pairs,function(x,y) x+y)
-S_trainDiff<-synthetic_variables(X_rf_train, pairs,function(x,y) x-y)
-S_trainProd<-synthetic_variables(X_rf_train, pairs,function(x,y) x*y)
-S_trainSgn<-synthetic_variables(X_rf_train, pairs,function(x,y)  x>y)
-S_trainAbs<-synthetic_variables(X_rf_train, pairs,function(x,y)  abs(x-y))
-X_rf_trainPlus<- cbind(X_rf_train,S_trainPlus)
-X_rf_trainDiff<- cbind(X_rf_train,S_trainDiff)
-X_rf_trainProd<- cbind(X_rf_train,S_trainProd)
-X_rf_trainSgn<- cbind(X_rf_train,S_trainSgn)
-X_rf_trainAbs<- cbind(X_rf_train,S_trainAbs)
-X_rf_trainAll<- cbind(X_rf_train, S_trainPlus,
-                      S_trainDiff,
-                      S_trainProd,
-                      S_trainSgn,
-                      S_trainAbs)
-message("rfs...")
-rf_plus<- randomForest(x= X_rf_trainPlus,
-                       y= y[ subsample[[r]]$keep ] |> as.factor() )
-cat("x")
-rf_diff<- randomForest(x= X_rf_trainDiff,
-                       y= y[ subsample[[r]]$keep ] |> as.factor() )
-cat("x")
-rf_prod<- randomForest(x= X_rf_trainProd,
-                       y= y[ subsample[[r]]$keep ] |> as.factor() )
-cat("x")
-rf_sgn<- randomForest(x= X_rf_trainSgn,
-                       y= y[ subsample[[r]]$keep ] |> as.factor())
-cat("x")
-rf_abs<- randomForest(x= X_rf_trainAbs,
-                       y= y[ subsample[[r]]$keep ] |> as.factor())
-cat("x")
-rf_all<- randomForest(x= X_rf_trainAll,
-                       y= y[ subsample[[r]]$keep ] |> as.factor())
-cat("x")
+#pairs<-rbind(
+#cbind(full_MDFSres[[r]]$res_2Dm$interaction_data$rel_name,
+#full_MDFSres[[r]]$res_2Dm$interaction_data$partner_name),
+#cbind(full_MDFSres[[r]]$res_2D0$interaction_data$rel_name,
+#full_MDFSres[[r]]$res_2D0$interaction_data$partner_name))
+#METHOD="md12pInt"
+#    f_key= if (METHOD %in% names(features)) METHOD else "md12Dp"
+#    X_test<- tdata[ subsample[[r]]$leave, ,drop=FALSE]
+#    X_train<- tdata[ subsample[[r]]$keep, ,drop=FALSE]
+#    X_rf_train<- X_train[, features[[f_key]][[r]], drop=FALSE ]
+#    X_rf_test<- X_test[, features[[f_key]][[r]], drop=FALSE ]
+#synthetic_variables<- function(data, pairs, pairwise_fun){
+# apply(pairs,1,function(ROW) pairwise_fun(rank(data[, ROW[[1]] ]), rank(data[, ROW[[2]] ])),
+#       simplify=FALSE) |> as.data.frame()
+#}
+#S_trainPlus<-synthetic_variables(X_rf_train, pairs,function(x,y) x+y)
+#S_trainDiff<-synthetic_variables(X_rf_train, pairs,function(x,y) x-y)
+#S_trainProd<-synthetic_variables(X_rf_train, pairs,function(x,y) x*y)
+#S_trainSgn<-synthetic_variables(X_rf_train, pairs,function(x,y)  x>y)
+#S_trainAbs<-synthetic_variables(X_rf_train, pairs,function(x,y)  abs(x-y))
+#X_rf_trainPlus<- cbind(X_rf_train,S_trainPlus)
+#X_rf_trainDiff<- cbind(X_rf_train,S_trainDiff)
+#X_rf_trainProd<- cbind(X_rf_train,S_trainProd)
+#X_rf_trainSgn<- cbind(X_rf_train,S_trainSgn)
+#X_rf_trainAbs<- cbind(X_rf_train,S_trainAbs)
+#X_rf_trainAll<- cbind(X_rf_train, S_trainPlus,
+#                      S_trainDiff,
+#                      S_trainProd,
+#                      S_trainSgn,
+#                      S_trainAbs)
+#message("rfs...")
+#rf_plus<- randomForest(x= X_rf_trainPlus,
+#                       y= y[ subsample[[r]]$keep ] |> as.factor() )
+#cat("x")
+#rf_diff<- randomForest(x= X_rf_trainDiff,
+#                       y= y[ subsample[[r]]$keep ] |> as.factor() )
+#cat("x")
+#rf_prod<- randomForest(x= X_rf_trainProd,
+#                       y= y[ subsample[[r]]$keep ] |> as.factor() )
+#cat("x")
+#rf_sgn<- randomForest(x= X_rf_trainSgn,
+#                       y= y[ subsample[[r]]$keep ] |> as.factor())
+#cat("x")
+#rf_abs<- randomForest(x= X_rf_trainAbs,
+#                       y= y[ subsample[[r]]$keep ] |> as.factor())
+#cat("x")
+#rf_all<- randomForest(x= X_rf_trainAll,
+#                       y= y[ subsample[[r]]$keep ] |> as.factor())
+#cat("x")
 
 ```
 
@@ -662,17 +744,17 @@ cat("x")
 #| label: synthetic_auc
 #| dependson: synthetic
 #| cache: true
-auc_from_rf<- function(rf,y_train){
- as.numeric( auc(response=y_train, predictor= rf$votes[,2]))
-}
-print("Synethetic models performace:")
-print(auc_from_rf(rf=rf_plus, y_train = y[ subsample[[r]]$keep ] ))
-print(auc_from_rf(rf=rf_diff, y_train = y[ subsample[[r]]$keep ] ))
-print(auc_from_rf(rf=rf_prod, y_train = y[ subsample[[r]]$keep ] ))
-print(auc_from_rf(rf=rf_sgn, y_train = y[ subsample[[r]]$keep ] ))
-print(auc_from_rf(rf=rf_abs, y_train = y[ subsample[[r]]$keep ] ))
-print(auc_from_rf(rf=rf_all, y_train = y[ subsample[[r]]$keep ] ))
-
+#auc_from_rf<- function(rf,y_train){
+# as.numeric( auc(response=y_train, predictor= rf$votes[,2]))
+#}
+#print("Synethetic models performace:")
+#print(auc_from_rf(rf=rf_plus, y_train = y[ subsample[[r]]$keep ] ))
+#print(auc_from_rf(rf=rf_diff, y_train = y[ subsample[[r]]$keep ] ))
+#print(auc_from_rf(rf=rf_prod, y_train = y[ subsample[[r]]$keep ] ))
+#print(auc_from_rf(rf=rf_sgn, y_train = y[ subsample[[r]]$keep ] ))
+#print(auc_from_rf(rf=rf_abs, y_train = y[ subsample[[r]]$keep ] ))
+#print(auc_from_rf(rf=rf_all, y_train = y[ subsample[[r]]$keep ] ))
+#
 ```
 
 
