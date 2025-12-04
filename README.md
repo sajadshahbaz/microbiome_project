@@ -7,9 +7,9 @@ in this repository, we have included data and algorithms to compute synergy amon
 
 Main results are contained in `.Rmd` notebooks:
 
-- `agp_analysis_public.Rmd` - results on american gut project dataset (rendered version [here](https://htmlpreview.github.io/https://github.com/sajadshahbaz/microbiome_project/blob/main/docs/agp_analysis_public.html) 
+- `agp_analysis_public.Rmd` - results on american gut project dataset (rendered version [here](https://htmlpreview.github.io/?url=https://github.com/sajadshahbaz/microbiome_project/blob/main/docs/agp_analysis_public.html) 
 
-- `additional_cohorts_public.Rmd` -  results on additi https://htmlpreview.github.io/ onal cohorts (further validation of the model on independent data)
+- `additional_cohorts_public.Rmd` -  results on additional cohorts (further validation of the model on independent data)
 
 - `docs/` subdirectory contains rendered versions of those notebooks.
 
