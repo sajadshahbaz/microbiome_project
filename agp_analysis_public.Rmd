@@ -1,8 +1,8 @@
 ---
 title: "Information Theory and Machine Learning Reveal Synergistic Interactions in
   Gut Microbiota Related to Food Allergy - data analysis pipeline"
-output:
-  html_document:
+format:
+  html:
     toc: true
     theme: united
     embed-resources: true
