@@ -4,6 +4,8 @@ title: "Information Theory and Machine Learning Reveal Synergistic Interactions 
 format:
   html:
     toc: true
+    toc-depth: 6
+    toc-expand: false
     theme: united
     embed-resources: true
 ---
@@ -25,7 +27,7 @@ library(ggplot2)
 
 ```
 
-# Initial data preparation
+## Initial data preparation
 
 Read the raw taxonomy abundance info and metadata from delimiter separated files.
 
@@ -107,14 +109,12 @@ Investigation suggests a common cutoff point, which corresponds to minimum cumul
 
   taxa_min_lib_size= 3636 
   crit_rank= which.min(abs(lib_sizes[size_order] - taxa_min_lib_size))
-
   plot(shannon_div[size_order],type='l')
   abline(v = crit_rank, col="red",lwd=2) 
   plot(simpson_index[size_order],type='l')
   abline(v = crit_rank, col="red",lwd=2) 
   plot(inverse_simp[size_order],type='l')
   abline(v = crit_rank, col="red",lwd=2) 
-
 
   tdata<- tdata[ rowSums(tdata) >= taxa_min_lib_size, ]
   tdata<- tdata/rowSums(tdata)
@@ -247,7 +247,7 @@ fisher.test(rbind(table(meta.mean.final[decision.mean.final==0,5]),
 
 ```
 
-###Median dataset MDFS for reference
+### Median dataset MDFS for reference
 
 ```{r}
 #| label: glob_MDFS 
@@ -588,8 +588,7 @@ names(METHODxROC)<- sapply(seq_along(METHODxROC),
                                      names(METHODxROC)[[m]],
                                      AUCxROC[[m]]))
          
-#pdf("roc_curve_v2.pdf", width=8,height=5)
-ggroc(METHODxROC, legacy.axes = T,aes=c("color"),lwd=0.75) +
+P<-ggroc(METHODxROC, legacy.axes = T,aes=c("color"),lwd=0.75) +
 geom_abline(slope = 1 ,intercept = 0, linetype="dashed") + # add identity line
 theme(
 panel.background = element_blank(),
@@ -605,6 +604,8 @@ scale_y_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
   ggtitle("Feature Selection + RF: ROC comparison") +# theme(legend.position = "left")
   scale_color_discrete(name = "FS method") +
    guides(color = guide_legend(override.aes = list(lwd = 5)))
+ggsave("figures/roc_agp.pdf", P)
+print(P)
 for (m in METHODS[1:4]){
 	print(m)
 	print(CONFxMETHOD[[m]])
@@ -804,7 +805,7 @@ long_perf <- melt(performance,
 levels(long_perf$Method) <- c("MDFS-1D", "MDFS-2D", "MDFS-2D + partners", "U-test", "md12DpInt")
 
 # Violin plot to show distribution
-ggplot(long_perf[long_perf$Method!="md12DpInt",], aes(x = Method, y = Value, fill = Method)) +
+P<-ggplot(long_perf[long_perf$Method!="md12DpInt",], aes(x = Method, y = Value, fill = Method)) +
   #geom_violin(trim = FALSE, alpha = 0.7) +
   geom_boxplot(width = 0.3, color = "black", notch = TRUE) +
    #geom_hline(data = summary_lines, aes(yintercept = median, color = Method), linetype = "solid") +
@@ -817,6 +818,8 @@ ggplot(long_perf[long_perf$Method!="md12DpInt",], aes(x = Method, y = Value, fil
   labs(title = sprintf("Performance Metric Distributions by Method, l.o.frac= %.2f",lop),
        y = "Value", x = "Feature Selection Method") + theme_minimal()+
   theme(legend.position = "right", axis.text.x = element_blank(), axis.ticks.x = element_blank())
+ggsave("figures/agp_boxplots.pdf", P)
+print(P)
 ```
 
 ###### Selection & partnership frequency calculation and visualization
@@ -1239,6 +1242,7 @@ This allows us to assess, independently of our testing method, the false positiv
 #| cache: true
 #| dependson: agp_subsamples63_perm.rds
 
+dummyz<-"foo"
 n_perm<-500
 
 perm_subsample<-readRDS('agp_subsamples63_perm.rds')
@@ -1272,98 +1276,98 @@ for (j in 1:n_perm){
 ```
 
 ```{r}
-for (x in perm_full_MDFSres)
-	print(x$res_1D0$statistic[ grep("g__Neisseria$",x$res_1D0$feature_names) ]==
-		x$res_1Dm$statistic[ grep("g__Neisseria$",x$res_1Dm$feature_names) ])
+#for (x in perm_full_MDFSres)
+#	print(x$res_1D0$statistic[ grep("g__Neisseria$",x$res_1D0$feature_names) ]==
+#		x$res_1Dm$statistic[ grep("g__Neisseria$",x$res_1Dm$feature_names) ])
 
 ```
 
 
 ```{r}
-someidx<-30
-print(sprintf("some real example: "))
-table(y_real=y[ subsample[[someidx]]$keep ])
-
-tmptaxa<- tdata
-colnames(tmptaxa)<- sapply(strsplit(colnames(tmptaxa),"\\."), function(x) x[[length(x)]])
-
-print(as.data.frame(do.call(table,c( 
-	binarize_taxa(tmptaxa[subsample[[someidx]]$keep,
-     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
-	thresholds=rep(0,2)) |> as.data.frame() |> as.list(),
- list( y_real=y[ subsample[[someidx]]$keep ]) )
-)))
-set.seed(212)
-for (someidx in sample(1:500,5,replace=FALSE)){
-	print(sprintf("permutation #%d :", someidx))
-yp<- y
-yp[] <- y [ perm_subsample[[someidx]]$p_idx ]
-print(table(y_permuted=yp[ perm_subsample[[someidx]]$keep ]))
-print("y_permuted vs y:")
-print(table(y_real=y[ subsample[[someidx]]$keep ] , y_permuted=yp[ perm_subsample[[someidx]]$keep ] ))
-print(as.data.frame(do.call(table,c( 
-	binarize_taxa(tmptaxa[perm_subsample[[someidx]]$keep,
-     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
-	thresholds=rep(0,2)) |> as.data.frame() |> as.list(),
- list( y_permuted=yp[ perm_subsample[[someidx]]$keep ]) )
-)))
-}
-
+#someidx<-30
+#print(sprintf("some real example: "))
+#table(y_real=y[ subsample[[someidx]]$keep ])
+#
+#tmptaxa<- tdata
+#colnames(tmptaxa)<- sapply(strsplit(colnames(tmptaxa),"\\."), function(x) x[[length(x)]])
+#
+#print(as.data.frame(do.call(table,c( 
+#	binarize_taxa(tmptaxa[subsample[[someidx]]$keep,
+#     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
+#	thresholds=rep(0,2)) |> as.data.frame() |> as.list(),
+# list( y_real=y[ subsample[[someidx]]$keep ]) )
+#)))
+#set.seed(212)
+#for (someidx in sample(1:500,5,replace=FALSE)){
+#	print(sprintf("permutation #%d :", someidx))
+#yp<- y
+#yp[] <- y [ perm_subsample[[someidx]]$p_idx ]
+#print(table(y_permuted=yp[ perm_subsample[[someidx]]$keep ]))
+#print("y_permuted vs y:")
+#print(table(y_real=y[ subsample[[someidx]]$keep ] , y_permuted=yp[ perm_subsample[[someidx]]$keep ] ))
+#print(as.data.frame(do.call(table,c( 
+#	binarize_taxa(tmptaxa[perm_subsample[[someidx]]$keep,
+#     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
+#	thresholds=rep(0,2)) |> as.data.frame() |> as.list(),
+# list( y_permuted=yp[ perm_subsample[[someidx]]$keep ]) )
+#)))
+#}
+#
 ```
 
 ```{r}
-someidx<-30
-print(sprintf("some real example: "))
-table(y_real=y[ subsample[[someidx]]$keep ])
-
-tmptaxa<- tdata
-colnames(tmptaxa)<- sapply(strsplit(colnames(tmptaxa),"\\."), function(x) x[[length(x)]])
-
-print(as.data.frame(do.call(table,c( 
-	binarize_taxa(tmptaxa[subsample[[someidx]]$keep,
-     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
-	thresholds=colMedians(tmptaxa[subsample[[someidx]]$keep,
-     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))] |> as.matrix()
-			      )) |> as.data.frame() |> as.list(),
- list( y_real=y[ subsample[[someidx]]$keep ]) )
-)))
-print(sprintf("IG({Y, Berg}+={Neiss})=%.3f", full_MDFSres[[someidx]]$res_2Dm$statistic[ 
-						grep("g__Neisseria$",full_MDFSres[[someidx]]$res_2Dm$feature_names)
-	      					] ))
-print(ComputeMaxInfoGainsDiscrete(data=binarize_taxa(tmptaxa[subsample[[someidx]]$keep,],
-	thresholds=colMedians(tmptaxa[subsample[[someidx]]$keep,
-			      ] |> as.matrix()
-	                     )), decision=yp[ subsample[[someidx]]$keep], dimensions=2)[
-		grep("g__Neisseria$", colnames(tmptaxa)),
-])
-set.seed(212)
-for (someidx in sample(1:500,5,replace=FALSE)){
-	print(sprintf("permutation #%d :", someidx))
-yp<- y
-yp[] <- y [ perm_subsample[[someidx]]$p_idx ]
-print(table(y_permuted=yp[ perm_subsample[[someidx]]$keep ]))
-print("y_permuted vs y:")
-print(table(y_real=y[ subsample[[someidx]]$keep ] , y_permuted=yp[ perm_subsample[[someidx]]$keep ] ))
-print(as.data.frame(do.call(table,c( 
-	binarize_taxa(tmptaxa[perm_subsample[[someidx]]$keep,
-     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
-	thresholds=colMedians(tmptaxa[perm_subsample[[someidx]]$keep,
-			      grep(c("g__Neisseria$|g__Bergeyella$"),colnames(tmptaxa))] |> as.matrix()
-	                     ))|> as.data.frame() |> as.list(),
- list( y_permuted=yp[ perm_subsample[[someidx]]$keep ]) )
-)))
-print(sprintf("IG({Y, Berg}+={Neiss})=%.3f", perm_full_MDFSres[[someidx]]$res_2Dm$statistic[ 
-						grep("g__Neisseria$",perm_full_MDFSres[[someidx]]$res_2Dm$feature_names)
-	      					] ))
-print(ComputeMaxInfoGainsDiscrete(data=binarize_taxa(tmptaxa[perm_subsample[[someidx]]$keep,],
-	thresholds=colMedians(tmptaxa[perm_subsample[[someidx]]$keep,
-			      ] |> as.matrix()
-	                     )), decision=yp[ perm_subsample[[someidx]]$keep], dimensions=2)[
-		grep("g__Neisseria$", colnames(tmptaxa)),
-])
-}
-
-
+#someidx<-30
+#print(sprintf("some real example: "))
+#table(y_real=y[ subsample[[someidx]]$keep ])
+#
+#tmptaxa<- tdata
+#colnames(tmptaxa)<- sapply(strsplit(colnames(tmptaxa),"\\."), function(x) x[[length(x)]])
+#
+#print(as.data.frame(do.call(table,c( 
+#	binarize_taxa(tmptaxa[subsample[[someidx]]$keep,
+#     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
+#	thresholds=colMedians(tmptaxa[subsample[[someidx]]$keep,
+#     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))] |> as.matrix()
+#			      )) |> as.data.frame() |> as.list(),
+# list( y_real=y[ subsample[[someidx]]$keep ]) )
+#)))
+#print(sprintf("IG({Y, Berg}+={Neiss})=%.3f", full_MDFSres[[someidx]]$res_2Dm$statistic[ 
+#						grep("g__Neisseria$",full_MDFSres[[someidx]]$res_2Dm$feature_names)
+#	      					] ))
+#print(ComputeMaxInfoGainsDiscrete(data=binarize_taxa(tmptaxa[subsample[[someidx]]$keep,],
+#	thresholds=colMedians(tmptaxa[subsample[[someidx]]$keep,
+#			      ] |> as.matrix()
+#	                     )), decision=yp[ subsample[[someidx]]$keep], dimensions=2)[
+#		grep("g__Neisseria$", colnames(tmptaxa)),
+#])
+#set.seed(212)
+#for (someidx in sample(1:500,5,replace=FALSE)){
+#	print(sprintf("permutation #%d :", someidx))
+#yp<- y
+#yp[] <- y [ perm_subsample[[someidx]]$p_idx ]
+#print(table(y_permuted=yp[ perm_subsample[[someidx]]$keep ]))
+#print("y_permuted vs y:")
+#print(table(y_real=y[ subsample[[someidx]]$keep ] , y_permuted=yp[ perm_subsample[[someidx]]$keep ] ))
+#print(as.data.frame(do.call(table,c( 
+#	binarize_taxa(tmptaxa[perm_subsample[[someidx]]$keep,
+#     			    grep(c("g__Neisseria$|g__Bergeyella$"), colnames(tmptaxa))],
+#	thresholds=colMedians(tmptaxa[perm_subsample[[someidx]]$keep,
+#			      grep(c("g__Neisseria$|g__Bergeyella$"),colnames(tmptaxa))] |> as.matrix()
+#	                     ))|> as.data.frame() |> as.list(),
+# list( y_permuted=yp[ perm_subsample[[someidx]]$keep ]) )
+#)))
+#print(sprintf("IG({Y, Berg}+={Neiss})=%.3f", perm_full_MDFSres[[someidx]]$res_2Dm$statistic[ 
+#						grep("g__Neisseria$",perm_full_MDFSres[[someidx]]$res_2Dm$feature_names)
+#	      					] ))
+#print(ComputeMaxInfoGainsDiscrete(data=binarize_taxa(tmptaxa[perm_subsample[[someidx]]$keep,],
+#	thresholds=colMedians(tmptaxa[perm_subsample[[someidx]]$keep,
+#			      ] |> as.matrix()
+#	                     )), decision=yp[ perm_subsample[[someidx]]$keep], dimensions=2)[
+#		grep("g__Neisseria$", colnames(tmptaxa)),
+#])
+#}
+#
+#
 ```
 
 ```{r}
@@ -1383,10 +1387,23 @@ eFPR[['u']][[j]]=length(perm_full_Ures[[j]]$rel_set)/length(perm_full_MDFSres[[j
 ```
 
 ```{r}
-pdf("empirical_FPR.pdf")
-for (name in names(eFPR))
-hist(eFPR[[name]], main=name)
-dev.off()
+nameMap<- rep(NA, length(eFPR))
+nameMap<- as.list(nameMap)
+nameMap$md1D0='MDFS1D-zero'
+nameMap$md1Dm='MDFS1D-median'
+nameMap$md2D0='MDFS2D-zero'
+nameMap$md2Dm='MDFS2D-median'
+nameMap$u='U-test'
+for (name in names(eFPR)){
+	cat(sprintf("\nsummary for %s method:\n  percentage of selected variables with permuted decision \n  per permutation repeat, highest percentiles", 
+		      nameMap[[name]]))
+	cat(paste0("\n    ", capture.output(
+					      round(quantile(eFPR[[name]], probs=seq(0.93,1,0.02)),4)
+						
+					    )
+	 	    )
+	     )
+}
 ```
 
 
@@ -1403,211 +1420,210 @@ max_permIG<- data.frame(IG1D= lapply(perm_full_MDFSres, function(x) max(max(x$re
 ```
 
 ```{r}
-pdf("max_perm_IG.pdf")
+pdf("figures/max_perm_IG.pdf")
 for (name in names(max_permIG))
  hist(max_permIG[[name]],main=sprintf("maximum %s - distribution over permutations", name))
 dev.off()
-```
-
-```{r}
-Reduce(rbind, 
-       lapply(perm_subsample, function(x)
-x$p_idx  )
-       )-> permutations
-permutations<- as.data.frame(permutations)
-nrow(permutations[!duplicated(permutations),])
-```
-
-
-```{r}
-named_IG<- function(mdfs_result){
- ig<-mdfs_result$statistic
- names(ig)<-mdfs_result$feature_names
-}
-nS_gt_thr<- function(thr, S){
- length(S) - findInterval(sort(thr),sort(S))
-}
-mean_subsampleIG1D<-colMeans(IG1D)
-mean_subsampleIG2D<-colMeans(IG2D)
-meanIG1Dorder<-order(mean_subsampleIG1D)
-meanIG2Dorder<-order(mean_subsampleIG2D)
-n_perm_gt_IG1D0<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG1D))
-n_perm_gt_IG1Dm<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG1D))
-n_perm_gt_IG2D0<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG2D))
-n_perm_gt_IG2Dm<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG2D))
-for (j in 1:n_perm){
- if (j%%50==0) message(sprintf("%d /%d",j,n_perm))
- n_perm_gt_IG1D0[j,]<- nS_gt_thr(thr=mean_subsampleIG1D, S=perm_full_MDFSres[[j]]$res_1D0$statistic)
- n_perm_gt_IG1Dm[j,]<- nS_gt_thr(thr=mean_subsampleIG1D, S=perm_full_MDFSres[[j]]$res_1Dm$statistic)
- n_perm_gt_IG2D0[j,]<- nS_gt_thr(thr=mean_subsampleIG2D, S=perm_full_MDFSres[[j]]$res_2D0$statistic)
- n_perm_gt_IG2Dm[j,]<- nS_gt_thr(thr=mean_subsampleIG2D, S=perm_full_MDFSres[[j]]$res_2Dm$statistic)
+for (name in names(max_permIG))
+ hist(max_permIG[[name]],main=sprintf("maximum %s - distribution over permutations", name))
+for (name in names(max_permIG)){
+	cat(sprintf("\n percentiles of maximum %s observed - over permuations", name))
+	cat(paste0("\n    ", capture.output(round(quantile(max_permIG[[name]], probs=seq(0,1,0.1)),2 ))))
 }
 ```
 
 ```{r}
-plot_survival_function<- function( Y, #n_reps x length(x)
-		       x, critical_x, crit_x_annot=NULL,
-		       ...){
- m<- colMeans(Y)
- sd<- apply(Y,2,sd)
- upper<- m+ sd
- lower<- m - sd
-
- plot(x, m, type="b", lwd=2, col="black",
-      ylim= range(Y),
-      ...)
- polygon(c(x,rev(x)),
-	 c(upper,rev(lower)),
-	 border=NA, col=rgb(0,0,1,0.25))
- abline(v=critical_x, lwd=2, col="red")
- if (!is.null(crit_x_annot)) legend("topright", lwd=2, col="red", legend=crit_x_annot)
-}
-pdf("n_perm_IG_gt_threshold.pdf")
-plot_survival_function( n_perm_gt_IG1D0, sort(mean_subsampleIG1D), 
-			critical_x= min(mean_subsampleIG1D[ fs_df$rel_1D >= 450 ]),
-			crit_x_annot= 'min IG1D \n (confirmed)',
-		       log='x', 
-		       main='# variables with perm_IG > IG[i] \n 1D0',
-		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
-		       ylab='# perm_IG > IG[i]')
-
-plot_survival_function( n_perm_gt_IG1Dm, sort(mean_subsampleIG1D), log='x', 
-			critical_x= min(mean_subsampleIG1D[ fs_df$rel_1D >= 450 ]),
-			crit_x_annot= 'min IG1D \n (confirmed)',
-		       main='# variables with perm_IG > IG[i] \n 1Dm',
-		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
-		       ylab='# perm_IG > IG[i]')
-
-plot_survival_function( n_perm_gt_IG2D0, sort(mean_subsampleIG2D), log='x', 
-			critical_x= min(mean_subsampleIG2D[ fs_df$rel_2D >= 450 ]),
-			crit_x_annot= 'min IG2D \n (confirmed)',
-		       main='# variables with perm_IG > IG[i] \n 2D0',
-		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
-		       ylab='# perm_IG > IG[i]')
-
-plot_survival_function( n_perm_gt_IG2Dm, sort(mean_subsampleIG2D), log='x', 
-			critical_x= min(mean_subsampleIG2D[ fs_df$rel_2D >= 450 ]),
-			crit_x_annot= 'min IG2D \n (confirmed)',
-		       main='# variables with perm_IG > IG[i] \n 2Dm',
-		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
-		       ylab='# perm_IG > IG[i]')
-dev.off()
-```
-
-```{r}
-
-c("res_1Dm", "res_2Dm", "res_1D0", "res_2D0")-> variant_names
-
-perm_IGranks<- lapply(variant_names,
-		      function(vn){
-			     lapply(perm_full_MDFSres, function(x)
-				     data.frame(taxon=x[[vn]]$feature_names,
-					   IG=x[[vn]]$statistic) 
-				     )
-		      })
-
-names(perm_IGranks)<-variant_names
-pdf("perm_IG_ranks.pdf")
-for (vn in variant_names){
-	plot(rank(perm_IGranks[[vn]][[1]]$IG),
-	     perm_IGranks[[vn]][[1]]$IG,
-	      pch=16, cex=0.3,col=rgb(0,0,0,0.3),
-	main=sprintf("%s - distribution of k-th largest IG over permuations",vn),
-	xlab="rank(IG_perm)", ylab="IG_perm")
-	for (j in 2:length(perm_IGranks[[vn]]))
-		points(rank(perm_IGranks[[vn]][[j]]$IG),
-			perm_IGranks[[vn]][[j]]$IG,
-	      pch=16, cex=0.3, col=rgb(0,0,0,0.3))
-	if (vn %in% c("res_2D0", "res_2Dm")){
-	abline(h= min(mean_subsampleIG2D[ fs_df$rel_2D >= 450 ]), lwd=3,col="red")
-	legend("topleft", lwd=3, col="red", legend="min 2D IG confirmed \n (jackknife mean)")
-	} else {
-	abline(h= min(mean_subsampleIG1D[ fs_df$rel_1D >= 450 ]), lwd=3,col="red")
-	legend("topleft", lwd=3, col="red", legend="min 1D IG confirmed \n (jackknife mean)")
-	}
-}
-dev.off()
-
+#Reduce(rbind, 
+#       lapply(perm_subsample, function(x)
+#x$p_idx  )
+#       )-> permutations
+#permutations<- as.data.frame(permutations)
+#nrow(permutations[!duplicated(permutations),])
 ```
 
 
 ```{r}
-
-
-all_the_taxa_permTest<-Reduce(union,lapply(perm_IGranks, function(x) Reduce(union,lapply(x, function(y) y$taxon))))
-
+#nS_gt_thr<- function(thr, S){
+# length(S) - findInterval(sort(thr),sort(S))
+#}
+#mean_subsampleIG1D<-colMeans(IG1D)
+#mean_subsampleIG2D<-colMeans(IG2D)
+#meanIG1Dorder<-order(mean_subsampleIG1D)
+#meanIG2Dorder<-order(mean_subsampleIG2D)
+#n_perm_gt_IG1D0<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG1D))
+#n_perm_gt_IG1Dm<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG1D))
+#n_perm_gt_IG2D0<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG2D))
+#n_perm_gt_IG2Dm<-matrix(nrow=n_perm, ncol=length(mean_subsampleIG2D))
+#for (j in 1:n_perm){
+# if (j%%50==0) message(sprintf("%d /%d",j,n_perm))
+# n_perm_gt_IG1D0[j,]<- nS_gt_thr(thr=mean_subsampleIG1D, S=perm_full_MDFSres[[j]]$res_1D0$statistic)
+# n_perm_gt_IG1Dm[j,]<- nS_gt_thr(thr=mean_subsampleIG1D, S=perm_full_MDFSres[[j]]$res_1Dm$statistic)
+# n_perm_gt_IG2D0[j,]<- nS_gt_thr(thr=mean_subsampleIG2D, S=perm_full_MDFSres[[j]]$res_2D0$statistic)
+# n_perm_gt_IG2Dm[j,]<- nS_gt_thr(thr=mean_subsampleIG2D, S=perm_full_MDFSres[[j]]$res_2Dm$statistic)
+#}
+#```
+#
+#```{r}
+#plot_survival_function<- function( Y, #n_reps x length(x)
+#		       x, critical_x, crit_x_annot=NULL,
+#		       ...){
+# m<- colMeans(Y)
+# sd<- apply(Y,2,sd)
+# upper<- m+ sd
+# lower<- m - sd
+#
+# plot(x, m, type="b", lwd=2, col="black",
+#      ylim= range(Y),
+#      ...)
+# polygon(c(x,rev(x)),
+#	 c(upper,rev(lower)),
+#	 border=NA, col=rgb(0,0,1,0.25))
+# abline(v=critical_x, lwd=2, col="red")
+# if (!is.null(crit_x_annot)) legend("topright", lwd=2, col="red", legend=crit_x_annot)
+#}
+#pdf("n_perm_IG_gt_threshold.pdf")
+#plot_survival_function( n_perm_gt_IG1D0, sort(mean_subsampleIG1D), 
+#			critical_x= min(mean_subsampleIG1D[ fs_df$rel_1D >= 450 ]),
+#			crit_x_annot= 'min IG1D \n (confirmed)',
+#		       log='x', 
+#		       main='# variables with perm_IG > IG[i] \n 1D0',
+#		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
+#		       ylab='# perm_IG > IG[i]')
+#
+#plot_survival_function( n_perm_gt_IG1Dm, sort(mean_subsampleIG1D), log='x', 
+#			critical_x= min(mean_subsampleIG1D[ fs_df$rel_1D >= 450 ]),
+#			crit_x_annot= 'min IG1D \n (confirmed)',
+#		       main='# variables with perm_IG > IG[i] \n 1Dm',
+#		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
+#		       ylab='# perm_IG > IG[i]')
+#
+#plot_survival_function( n_perm_gt_IG2D0, sort(mean_subsampleIG2D), log='x', 
+#			critical_x= min(mean_subsampleIG2D[ fs_df$rel_2D >= 450 ]),
+#			crit_x_annot= 'min IG2D \n (confirmed)',
+#		       main='# variables with perm_IG > IG[i] \n 2D0',
+#		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
+#		       ylab='# perm_IG > IG[i]')
+#
+#plot_survival_function( n_perm_gt_IG2Dm, sort(mean_subsampleIG2D), log='x', 
+#			critical_x= min(mean_subsampleIG2D[ fs_df$rel_2D >= 450 ]),
+#			crit_x_annot= 'min IG2D \n (confirmed)',
+#		       main='# variables with perm_IG > IG[i] \n 2Dm',
+#		       xlab='IG[i] (jackknife mean of confirmed variable number i )',
+#		       ylab='# perm_IG > IG[i]')
+#dev.off()
+#```
+#
+#```{r}
+#
+#c("res_1Dm", "res_2Dm", "res_1D0", "res_2D0")-> variant_names
+#
+#perm_IGranks<- lapply(variant_names,
+#		      function(vn){
+#			     lapply(perm_full_MDFSres, function(x)
+#				     data.frame(taxon=x[[vn]]$feature_names,
+#					   IG=x[[vn]]$statistic) 
+#				     )
+#		      })
+#
+#names(perm_IGranks)<-variant_names
+#pdf("perm_IG_ranks.pdf")
+#for (vn in variant_names){
+#	plot(rank(perm_IGranks[[vn]][[1]]$IG),
+#	     perm_IGranks[[vn]][[1]]$IG,
+#	      pch=16, cex=0.3,col=rgb(0,0,0,0.3),
+#	main=sprintf("%s - distribution of k-th largest IG over permuations",vn),
+#	xlab="rank(IG_perm)", ylab="IG_perm")
+#	for (j in 2:length(perm_IGranks[[vn]]))
+#		points(rank(perm_IGranks[[vn]][[j]]$IG),
+#			perm_IGranks[[vn]][[j]]$IG,
+#	      pch=16, cex=0.3, col=rgb(0,0,0,0.3))
+#	if (vn %in% c("res_2D0", "res_2Dm")){
+#	abline(h= min(mean_subsampleIG2D[ fs_df$rel_2D >= 450 ]), lwd=3,col="red")
+#	legend("topleft", lwd=3, col="red", legend="min 2D IG confirmed \n (jackknife mean)")
+#	} else {
+#	abline(h= min(mean_subsampleIG1D[ fs_df$rel_1D >= 450 ]), lwd=3,col="red")
+#	legend("topleft", lwd=3, col="red", legend="min 1D IG confirmed \n (jackknife mean)")
+#	}
+#}
+#dev.off()
+#
+#```
+#
+#
+#```{r}
+#
+#
+#all_the_taxa_permTest<-Reduce(union,lapply(perm_IGranks, function(x) Reduce(union,lapply(x, function(y) y$taxon))))
+#
+#```
+#
+#
+#```{r}
+#k=35
+#F<-lapply(variant_names, function(x) matrix(0, nrow=length(all_the_taxa_permTest),
+#	   ncol=k))
+#names(F)<-variant_names
+#for (i in seq_along(F)) rownames(F[[i]])<-all_the_taxa_permTest
+#for (vn in variant_names) for (j in 1:n_perm){
+#	top_k_idx<- order(perm_IGranks[[vn]][[j]]$IG, decreasing=TRUE)[1:k]
+#	top_k_taxa<-perm_IGranks[[vn]][[j]]$taxon[top_k_idx]
+#	for (k_i in 1:k){
+#	F[[vn]][ top_k_taxa[[k_i]],k_i   ]=   F[[vn]][ top_k_taxa[[k_i]],k_i   ] + 1
+#	}
+#}
+#
+#
+#```
+#
+#
+#```{r}
+#vn<- variant_names[[1]]
+#pdf("rank_frequency_perm.pdf", width=14,height=7)
+#for (vn in variant_names){
+#F_v<-	F[[vn]][ order(-rowSums(F[[vn]])), ]
+#rownames(F_v)<- sapply(strsplit(rownames(F_v),"\\."), function(x) x[[length(x)]])
+#F_v<- F_v[1:35,1:10]
+#F_v_flat<-melt(F_v)
+#colnames(F_v_flat)<- c("taxon", "top_k","freq")
+#myplot<-ggplot(F_v_flat, aes(x= taxon, y=top_k, fill=freq)) + geom_tile()+
+#   ggtitle(sprintf("%s - frequency of having top_k highest IG in permuatations",vn))+
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))+
+#    geom_text(aes(label = freq), color = "pink")
+#    #ggsave(sprintf("%s_rankFreq_perm.pdf",vn),myplot,width=14,height=7,units="in")
+#    print(myplot)
+#}
+#dev.off()
+#```
+#
+#```{r}
+#plausible_perm_IG<- lapply(variant_names, function(vn)
+#		      matrix(NA,nrow=n_perm, ncol=length(plausible)))
+#names(plausible_perm_IG)<- variant_names
+#for (vn in variant_names) colnames(plausible_perm_IG[[vn]])<- plausible
+#for (vn in variant_names) for (j in 1:n_perm){
+#	perm_IGranks[[vn]][[j]]$IG-> temp
+#	names(temp)<- perm_IGranks[[vn]][[j]]$taxon
+#	plausible_perm_IG[[vn]][j, ]= temp[ plausible ]
+#}
+#```
+#
+#
+#```{r}
+#
+#for (vn in variant_names) colnames(plausible_perm_IG[[vn]])<- sapply(strsplit(plausible,"\\."), function(x) x[[length(x)]])
+#
+#pdf("IGperm_histograms_plausible.pdf")
+#
+#for (ptaxa in colnames(plausible_perm_IG[[1]]))
+#	for (vn in variant_names)
+#		hist(plausible_perm_IG[[vn]][,ptaxa], main= sprintf("perm_IG of %s - %s", ptaxa, vn))
+#
+#dev.off()
+#
+#```
+#
+#
+#
+#
+#
 ```
-
-
-```{r}
-k=35
-F<-lapply(variant_names, function(x) matrix(0, nrow=length(all_the_taxa_permTest),
-	   ncol=k))
-names(F)<-variant_names
-for (i in seq_along(F)) rownames(F[[i]])<-all_the_taxa_permTest
-for (vn in variant_names) for (j in 1:n_perm){
-	top_k_idx<- order(perm_IGranks[[vn]][[j]]$IG, decreasing=TRUE)[1:k]
-	top_k_taxa<-perm_IGranks[[vn]][[j]]$taxon[top_k_idx]
-	for (k_i in 1:k){
-	F[[vn]][ top_k_taxa[[k_i]],k_i   ]=   F[[vn]][ top_k_taxa[[k_i]],k_i   ] + 1
-	}
-}
-
-
-```
-
-
-```{r}
-vn<- variant_names[[1]]
-pdf("rank_frequency_perm.pdf", width=14,height=7)
-for (vn in variant_names){
-F_v<-	F[[vn]][ order(-rowSums(F[[vn]])), ]
-rownames(F_v)<- sapply(strsplit(rownames(F_v),"\\."), function(x) x[[length(x)]])
-F_v<- F_v[1:35,1:10]
-F_v_flat<-melt(F_v)
-colnames(F_v_flat)<- c("taxon", "top_k","freq")
-myplot<-ggplot(F_v_flat, aes(x= taxon, y=top_k, fill=freq)) + geom_tile()+
-   ggtitle(sprintf("%s - frequency of having top_k highest IG in permuatations",vn))+
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))+
-    geom_text(aes(label = freq), color = "pink")
-    #ggsave(sprintf("%s_rankFreq_perm.pdf",vn),myplot,width=14,height=7,units="in")
-    print(myplot)
-}
-dev.off()
-```
-
-```{r}
-plausible_perm_IG<- lapply(variant_names, function(vn)
-		      matrix(NA,nrow=n_perm, ncol=length(plausible)))
-names(plausible_perm_IG)<- variant_names
-for (vn in variant_names) colnames(plausible_perm_IG[[vn]])<- plausible
-for (vn in variant_names) for (j in 1:n_perm){
-	perm_IGranks[[vn]][[j]]$IG-> temp
-	names(temp)<- perm_IGranks[[vn]][[j]]$taxon
-	plausible_perm_IG[[vn]][j, ]= temp[ plausible ]
-}
-```
-
-
-```{r}
-
-for (vn in variant_names) colnames(plausible_perm_IG[[vn]])<- sapply(strsplit(plausible,"\\."), function(x) x[[length(x)]])
-
-pdf("IGperm_histograms_plausible.pdf")
-
-for (ptaxa in colnames(plausible_perm_IG[[1]]))
-	for (vn in variant_names)
-		hist(plausible_perm_IG[[vn]][,ptaxa], main= sprintf("perm_IG of %s - %s", ptaxa, vn))
-
-dev.off()
-
-```
-
-
-```{r}
-
-
-```
-
-
-
