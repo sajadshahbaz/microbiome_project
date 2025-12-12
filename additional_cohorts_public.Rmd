@@ -1,10 +1,13 @@
 ---
 title: "Information Theory and Machine Learning Reveal Synergistic Interactions in
-  Gut Microbiota Related to Disease - data analysis pipeline"
-output:
-  html_document:
+  Gut Microbiota Related to Food Allergy - data analysis pipeline"
+format:
+  html:
     toc: true
+    toc-depth: 6
+    toc-expand: false
     theme: united
+    embed-resources: true
 ---
 
 ```{r setup, include=FALSE}
@@ -12,11 +15,26 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
+```{r}
+#| label: library_load
+library(magrittr)
+library(matrixStats)
+library(MDFS)
+library(randomForest)
+library(pROC)
+library(reshape2)
+library(ggplot2)
+
+```
+
+
 # Initial data preparation
 
 Read the raw taxonomy abundance info and metadata from delimiter separated files.
 
-```{r read}
+```{r}
+#| label: read_data
+#| cache: true
 metadata.filename <- "merged_metadata.txt"
 taxa.filename <- "merged_taxonomy.txt"
 tdata <- as.data.frame(t(read.delim(taxa.filename, header = TRUE, sep = "\t")))
@@ -33,6 +51,11 @@ metadata<-read.delim(metadata.filename, header = TRUE, sep = "\t")
 
 
 ```{r}
+#| label: select_cohorts
+#| dependson: read_data
+#| cache: true
+
+
 
 read.table("duze.asc") |> unlist() |> unname() -> cohort_ids 
 cohort_ids[[2]]="HMP_2019_t2d"
@@ -56,6 +79,10 @@ Decision vectors are stored in a list `decision`, `decision$cohort_name` gives t
 exact disease names encoded by 1 can be seen by inspecting `attr(decision$cohort_name, "code_dict")`
 
 ```{r}
+#| label: binary_dec
+#| dependson: select_cohorts
+#| cache: true
+
 
 lapply(cohort_ids,
        function(id){
@@ -83,6 +110,10 @@ Similarly, taxa abundances are stored in list of data.frames, one row per sample
 #### Remove cohorts with no fully matching ids between taxa abundance and metadata
 
 ```{r}
+#| label: taxa_prep
+#| dependson: binary_dec
+#| cache: true
+
 allOK <-sapply(decision, function(y) length(intersect(names(y), rownames(tdata) ))==length(names(y)))
 cohort_ids<- cohort_ids[allOK]
 decision<- decision[allOK]
@@ -105,6 +136,7 @@ Normalize abundances and use proportions to calculate 3 versions of alpha divers
 
 
 ```{r}
+#| label: diversity
 diversity_indices<- function(tdata, data_name){
 lib_sizes<- rowSums(tdata) 
   t_props<-( tdata
@@ -131,6 +163,7 @@ lib_sizes<- rowSums(tdata)
 
 
 ```{r}
+#| label: diversity_calc
  mapply(diversity_indices, taxa, names(taxa)) |> invisible()
 ```
 
@@ -140,6 +173,9 @@ At this stage of preprocessing, we do not see any evidence for clear relationshi
 Finally, we normalize by total sample abundance:
 
 ```{r}
+#| label: normalize
+#| dependson: taxa_prep
+#| cache: true
 
 lapply(taxa, function(data) data/rowSums(data))-> taxa
 
@@ -153,6 +189,7 @@ These values are seen on Y axis, while each position on X axis corresponds to ea
 Horizontal line is drawn at 30.
 
 ```{r}
+#| label: binarization_viz
 
 mapply(function(data, name)
   {(colSums(data>0))|> sort() |> plot(main=sprintf("%s, nubmers of non zero entries per taxa
@@ -204,8 +241,10 @@ Thus, based on `interaction_data`, it can create an array of additional, discret
 
 
 ```{r}
-library(matrixStats)
-library(MDFS)
+#| label: global_fs
+#| dependson: normalize
+#| cache: true
+
 source("FS_functions.R")
 
 MDFS_global<- lapply(names(taxa), function(coh)
@@ -225,6 +264,9 @@ U_global<- lapply(names(taxa), function(coh)
 
 
 ```{r}
+#| label: subsamples_prep
+#| dependson: normalize
+#| cache: true
 
 source("subsample_nonrepeating_donors.R")
 n_repeats=500
@@ -254,10 +296,11 @@ subsample<- readRDS("new_cohorts_subsample.rds")
 #### Testing 
 
 ```{r}
-library(MDFS)
+#| label: run_pipeline
+#| dependson: subsamples_prep
+#| cache: true
 source("FS_functions.R")
 lop=0.37
-library(randomForest)
 set.seed(123)
 n_repeats=500
 lapply(cohort_ids, function(._) sample.int(452332,n_repeats))-> seeds
@@ -365,8 +408,10 @@ message(sprintf( "%d / %d done", j, n_repeats))
 
 
 ```{r}
+#| label: validate_results
+#| dependson: run_pipeline
+#| cache: true
 
-library(pROC)
 n_repeats=500
 #n_repeats=30
 source("balanced_decision.R")
@@ -459,15 +504,18 @@ for (j in 1:n_repeats){
 ```
 
 ```{r}
+#| label: save_perf
 
+if (!file.exists("performance_additional.rds")) {
 saveRDS(performance, "performance_additional.rds")
+}
 
 ```
 
 
 ```{r}
+#| label: melt_performance
 
-library(reshape2)
 long_perf <- melt(performance, 
                   varnames = c("Cohort", "Method", "Metric", "Repeat"), value.name = "Value")
 
@@ -476,7 +524,7 @@ long_perf <- melt(performance,
 
 
 ```{r, fig.height=6, fig.width=8}
-library(ggplot2)
+#| label: plot_performance
 #library(dplyr)
 #summary_lines <- long_perf %>%
 #  group_by(Metric, Method) %>%
@@ -491,7 +539,7 @@ library(ggplot2)
 # Violin plot to show distribution
 levels(long_perf$Method)<- c("MDFS-1D", "MDFS-2D", "MDFS-2D + partners", "U-test", "md12DpInt")
 long_perf<- long_perf[long_perf$Method!="md12DpInt",]
-ggplot(long_perf[(!(
+P<-ggplot(long_perf[(!(
                   (long_perf$Metric=="OR") &
                    (long_perf$Value>19)
                     ))
@@ -510,10 +558,15 @@ ggplot(long_perf[(!(
   labs(title = sprintf("Performance Metric Distributions by Method, l.o.frac= %.2f",lop),
        y = "Value", x = "Feature Selection Method") +theme_minimal()+
   theme(legend.position = "bottom", axis.text.x=element_blank(), axis.ticks.x=element_blank())
+print(P)
+ggsave("figures/perf_additional.pdf", P)
 
 ```
 
 ```{r}
+#| label: features_freq
+#| dependson: validate_results
+#| cache: true
 
 
 
@@ -536,6 +589,7 @@ feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over90)
 
 
 ```{r}
+#| label: features_freq_check
 
 (features_AP_90$JieZ_2017 |> colnames()) %in% Reduce(union,lapply(MDFS_global[[1]], function(x) x$rel_set))
 (features_AP_90$MetaCardis_2020_a |> colnames()) %in% Reduce(union,lapply(MDFS_global[[2]], function(x) x$rel_set))
@@ -547,6 +601,8 @@ feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over90)
 
 
 ```{r}
+#| label: features_freq_show
+
 print(cohort_ids[[1]])
 features_AP_90$JieZ_2017 |> t()
 print(cohort_ids[[2]])
@@ -557,6 +613,8 @@ features_AP_90$YachidaS_2019|> t()
 
 
 ```{r}
+#| label: fs_plausible_vs_global
+
 print("Fraction of plausible taxa found by U-test in global run, also found in one global run MDFS")
 mapply(function(mdfs, u, recurrent90){
   #print(rownames(recurrent90))
@@ -571,8 +629,126 @@ mapply(function(mdfs, u, recurrent90){
   
   )
 ```
+
+#### Permutation test
+
+Handled by `permutation_additional.R` script- before subsampling, decision vectors were permuted. Here are the results:
+
 ```{r}
 
+perm_subsample<- readRDS("new_cohorts_subsample_perm.rds")
+
+lop=0.37
+set.seed(123)
+n_repeats=500
+
+perm_features<- list(md1D=list(),
+                md12D=list(),
+                md12Dp=list(),
+                u=list()
+                )
+for (fs in names(perm_features))
+	for (coh in cohort_ids)
+	perm_features[[fs]][[coh]]=list()
+
+		#cohort name    #repeat	  #leave out perc.
+perm_fs_j_pattern="features/perm_%s_fs_set_j=%d_lop=%.2f.rds"
+
+perm_full_MDFSres<- perm_full_Ures<-list()
+for (coh in cohort_ids) perm_full_MDFSres[[coh]]<-perm_full_Ures[[coh]]<-list()
+
+for (j in 1:n_repeats){
+for (coh in cohort_ids){
+
+  perm_fs_j_fname= sprintf(perm_fs_j_pattern,coh,j,lop)
+  if(!file.exists(perm_fs_j_fname)){
+	  stop(sprintf("%s should exist!",perm_fs_j_fname))
+  				} else
+				{
+	fs_j= readRDS(perm_fs_j_fname)
+        all_mdfs_j=fs_j$mdfs
+        u_j=fs_j$u
+				}
+	perm_full_MDFSres[[coh]][[j]]=all_mdfs_j
+  	perm_full_Ures[[coh]][[j]]=u_j
+
+	perm_features$u[[coh]][[j]]=u_j$rel_set
+	perm_features$md1D[[coh]][[j]]=union(all_mdfs_j$res_1Dm$rel_set, all_mdfs_j$res_1D0$rel_set)
+        perm_features$md12D[[coh]][[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$rel_set, 
+                                                  all_mdfs_j$res_2D0$rel_set,
+                                                  features$md1D[[coh]][[j]]))
+        perm_features$md12Dp[[coh]][[j]]=Reduce(union, list(all_mdfs_j$res_2Dm$partner_set,
+                                                       all_mdfs_j$res_2D0$partner_set,
+                                                  features$md12D[[coh]][[j]]))
+
+	
+}
+if ((j-1)%%50 == 0) message(sprintf( "%d / %d done", j, n_repeats))
+}
+
+```
+
+```{r}
+
+eFPR<-lapply(cohort_ids, function(coh)
+	     list(md1D0=vector(), 
+	 md1Dm=vector(),
+	 md2Dm=vector(),
+	 md2D0=vector(),
+	 u=vector())
+	     )
+names(eFPR)<-cohort_ids
+for (coh in cohort_ids)
+for (j in 1:n_repeats){
+eFPR[[coh]][['md1D0']][[j]]=length(perm_full_MDFSres[[coh]][[j]]$res_1D0$rel_set)/length(perm_full_MDFSres[[coh]][[j]]$res_1D0$feature_names)
+eFPR[[coh]][['md1Dm']][[j]]=length(perm_full_MDFSres[[coh]][[j]]$res_1Dm$rel_set)/length(perm_full_MDFSres[[coh]][[j]]$res_1Dm$feature_names)
+eFPR[[coh]][['md2D0']][[j]]=length(perm_full_MDFSres[[coh]][[j]]$res_2D0$rel_set)/length(perm_full_MDFSres[[coh]][[j]]$res_2D0$feature_names)
+eFPR[[coh]][['md2Dm']][[j]]=length(perm_full_MDFSres[[coh]][[j]]$res_2Dm$rel_set)/length(perm_full_MDFSres[[coh]][[j]]$res_2Dm$feature_names)
+eFPR[[coh]][['u']][[j]]=length(perm_full_Ures[[coh]][[j]]$rel_set)/length(perm_full_MDFSres[[coh]][[j]]$res_1D0$feature_names) #same filtering on sparsity in U_test
+
+}
+
+```
+
+```{r}
+
+nameMap<- rep(NA, length(eFPR))
+nameMap<- as.list(nameMap)
+nameMap$md1D0='MDFS1D-zero'
+nameMap$md1Dm='MDFS1D-median'
+nameMap$md2D0='MDFS2D-zero'
+nameMap$md2Dm='MDFS2D-median'
+nameMap$u='U-test'
+for (coh in cohort_ids)
+for (name in names(eFPR[[coh]])){
+	cat(sprintf("\n %s: \nsummary for %s method:\n  percentage of selected variables with permuted decision \n  per permutation repeat, highest percentiles", coh, 
+		      nameMap[[name]]))
+	cat(paste0("\n    ", capture.output(
+					      round(quantile(eFPR[[coh]][[name]], probs=seq(0.93,1,0.02)),4)
+						
+					    )
+	 	    )
+	     )
+}
+
+```
 
 
+```{r}
+max_permIG<-list()
+for (coh in cohort_ids){
+max_permIG[[coh]]<- data.frame(IG1D= lapply(perm_full_MDFSres[[coh]], function(x) max(max(x$res_1D0$statistic), max(x$res_1Dm$statistic)))|>unlist(),
+		        IG2D= lapply(perm_full_MDFSres[[coh]], function(x) max(max(x$res_2D0$statistic), max(x$res_2Dm$statistic)))|>unlist())
+}	
+			
+
+
+```
+
+```{r}
+for (coh in cohort_ids)
+for (name in names(max_permIG[[coh]])){
+	cat(sprintf("\n %s:\n percentiles of maximum %s observed - over permuations",coh, name))
+	cat(paste0("\n    ", capture.output(round(quantile(max_permIG[[coh]][[name]], probs=seq(0,1,0.1)),2 ))))
+}
 ```
