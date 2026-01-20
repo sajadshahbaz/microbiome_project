@@ -151,6 +151,9 @@ names(ids)<-rownames(metadata)
 
 donors<-unique(ids)
 
+tdata.ps<-tdata
+pscnt<-min(tdata[tdata>0])/10
+tdata.ps[,]<-pmax(unlist(tdata.ps),pscnt)
 taxonomy.mean<-matrix(NA,length(donors),ncol(tdata))
 rownames(taxonomy.mean)<-donors
 colnames(taxonomy.mean)<-colnames(tdata)
@@ -159,6 +162,7 @@ rownames(meta.mean)<-donors
 colnames(meta.mean)<-c('age','sex','weight.kg','height.cm','BMI_cat','age_cat')
 decision.mean<-numeric(length(donors))
 names(decision.mean)<-donors
+samples_chosen_names<- rep(NA, length(donors))
 
 if (!file.exists("mean_data.RData")){
 for (i in 1:length(donors)) {
@@ -170,8 +174,13 @@ for (i in 1:length(donors)) {
  decision.mean[i]<-floor(median(decs))
  
  #taxa
- taxa<-tdata[samples,,drop=F]
- taxonomy.mean[i,]<-colMedians(as.matrix(taxa))
+ taxa<-as.matrix(tdata[samples,,drop=F])
+ taxa.ps<-as.matrix(tdata.ps[samples,,drop=F]) 
+ taxonomy.mean[i,]<-colMedians(taxa) # median vector x_m of x_1, x_2 ... x_n, x_i<- abundance vector of i-th sample
+ taxa.ps.mean<- colMedians(taxa.ps)
+ which.sample<-which.min(colSums(log(t(taxa.ps)/taxa.ps.mean))) # arg min_i : || log(x_i) - log(x_m) ||_2
+ taxonomy.mean[i,]<- taxa[which.sample,]
+ samples_chosen_names[i]<- rownames(taxa)[which.sample]
  
  #metadata
  #age
@@ -210,14 +219,18 @@ meta.mean.final[bmi>=30,5]<-'Obese'
 
 decision.mean.final<-decision.mean[mask.meta]
 taxonomy.mean.final<-taxonomy.mean[mask.meta,]
+samples_chosen_names<- samples_chosen_names[mask.meta]
 taxonomy.mean.final<-taxonomy.mean.final[,colSums(taxonomy.mean.final>0)>20]
 taxonomy.mean.final<-as.data.frame(taxonomy.mean.final/rowSums(taxonomy.mean.final)*10000)
 
 binary.mean.final<-taxonomy.mean.final*0
 for (i in 1:ncol(binary.mean.final)) binary.mean.final[,i]<-taxonomy.mean.final[,i]>median(taxonomy.mean.final[,i])
 
-save(meta.mean.final,decision.mean.final,taxonomy.mean.final,binary.mean.final,file='mean_data.RData')
+save(meta.mean.final,decision.mean.final,taxonomy.mean.final,binary.mean.final, samples_chosen_names, file='mean_data.RData')
 } else {load("mean_data.RData")}
+#sanity correctness check:
+tsub<-tdata[samples_chosen_names, colnames(taxonomy.mean.final)]
+stopifnot(all((tsub/rowSums(tsub)*10000)==taxonomy.mean.final))
 
 
 #Table 1 
