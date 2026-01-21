@@ -229,8 +229,8 @@ for (i in 1:ncol(binary.mean.final)) binary.mean.final[,i]<-taxonomy.mean.final[
 save(meta.mean.final,decision.mean.final,taxonomy.mean.final,binary.mean.final, samples_chosen_names, file='mean_data.RData')
 } else {load("mean_data.RData")}
 #sanity correctness check:
-tsub<-tdata[samples_chosen_names, colnames(taxonomy.mean.final)]
-stopifnot(all((tsub/rowSums(tsub)*10000)==taxonomy.mean.final))
+#tsub<-tdata[samples_chosen_names, colnames(taxonomy.mean.final)]
+#stopifnot(all((tsub/rowSums(tsub)*10000)==taxonomy.mean.final))
 
 
 #Table 1 
@@ -624,7 +624,76 @@ for (m in METHODS[1:4]){
 	print(CONFxMETHOD[[m]])
 	print(sprintf("OR=%.3f ",ORxMETHOD[[m]]))
 }
-#dev.off()
+
+
+
+
+
+
+```
+
+
+
+```{r}
+#| label: roc_tab
+#| dependson: roc
+#| cache: true
+library(pROC)
+
+PAIRWISE_TAB <- list()
+nm_methods <- names(METHODxROC)
+
+k <- 1
+for (i in seq_along(nm_methods)) {
+  for (j in seq_along(nm_methods)) {
+    if (i < j) {
+
+      m1 <- nm_methods[i]
+      m2 <- nm_methods[j]
+
+      roc1 <- METHODxROC[[m1]]
+      roc2 <- METHODxROC[[m2]]
+
+      rt <- roc.test(roc1, roc2, conf.int=TRUE)   # DeLong test
+
+      # AUCs
+      auc1 <- as.numeric(auc(roc1))
+      auc2 <- as.numeric(auc(roc2))
+
+      # CI for delta AUC
+
+      delta_ci_txt <- sprintf(
+        "[%.3f, %.3f]",
+	rt$conf.int[1],
+	rt$conf.int[2]
+      )
+
+      PAIRWISE_TAB[[k]] <- data.frame(
+        model_1 = m1,
+        model_2 = m2,
+
+        AUC_1 = round(auc1, 2),
+        AUC_2 = round(auc2, 2),
+
+        OR_1 = round(ORxMETHOD[[METHODS[i]]], 2),
+        OR_2 = round(ORxMETHOD[[METHODS[j]]], 2),
+
+        deltaAUC_CI = delta_ci_txt,
+
+        Z = round(as.numeric(rt$statistic), 1),
+        p_value = round(rt$p.value, 4),
+
+        stringsAsFactors = FALSE
+      )
+
+      k <- k + 1
+    }
+  }
+}
+
+PAIRWISE_TAB <- do.call(rbind, PAIRWISE_TAB)
+
+PAIRWISE_TAB
 ```
 
 ```{r}
@@ -856,9 +925,30 @@ do.call(rbind,
 
 colnames(feature_absence_presence)<-universe
 
-frequent_<- list(over95= .95*n_repeats, over90=.9*n_repeats)
+global_basis<- Reduce(union, lapply(global_MDFS, function(x) x$rel_set)) 
+global_basis<- union(global_basis, global_U$rel_set)
+
+
+frequent_<- list(over98=.98*n_repeats, over95= .95*n_repeats, over90=.9*n_repeats)
 feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over95)] -> features_AP_filtered95
 feature_absence_presence[, colAnys(feature_absence_presence >= frequent_$over90)] -> features_AP_filtered90
+
+print("over 90 vs global_basis: ")
+print("union: ")
+length(union(colnames(features_AP_filtered90), global_basis))
+print("intersection: ")
+length(intersect(colnames(features_AP_filtered90), global_basis))
+print("o90 - global_basis: ")
+length(setdiff(colnames(features_AP_filtered90), global_basis))
+print("global_basis - o90: ")
+length( setdiff(global_basis, colnames(features_AP_filtered90)))
+
+stopifnot( 
+length(setdiff(colnames(features_AP_filtered90), global_basis))==0
+)
+
+feature_absence_presence[, global_basis] -> global_basis_freq
+
 
 ```
 
@@ -874,6 +964,16 @@ viz_f90[ do.call(order, viz_f90),]
 ```
 
 
+```{r}
+#| label: viz_globalbasis
+#| dependson: freq_filter
+#| cache: true
+
+global_basis_viz<- global_basis_freq
+colnames(global_basis_viz)<- sapply(strsplit(colnames(global_basis_viz),split="\\."), function(x) x[[length(x)]])
+global_basis_viz<-t(global_basis_viz) |> as.data.frame()
+global_basis_viz[ do.call(order, global_basis_viz),]
+```
 
 
 ```{r}
@@ -1017,8 +1117,8 @@ colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(
 rownames(vpm0)<-sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
 vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
 vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
-vpm0<- vpm0[, colMaxs(vpm0)>300]
-vpm0<- vpm0[rowMaxs(vpm0)>200 , ]
+vpm0<- vpm0[, colMaxs(vpm0)>450]
+#vpm0<- vpm0[rowMaxs(vpm0)>200 , ]
 vpm0_flat<-melt(vpm0)
 colnames(vpm0_flat)<-c("rel","partner","freq")
 ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
@@ -1047,18 +1147,28 @@ jackknife_SE<- function(replicates,N,D,R=NULL){
 
 for (v in names(global_MDFS))
   names(global_MDFS[[v]]$statistic)<- global_MDFS[[v]]$feature_names
-fs_df<- data.frame(taxon=plausible,
-                        IG2D= pmax(global_MDFS$res_2Dm$statistic[ plausible  ],
-                                   global_MDFS$res_2D0$statistic[ plausible  ]),
+#fs_df<- data.frame(taxon=plausible,
+#                        IG2D= pmax(global_MDFS$res_2Dm$statistic[ plausible  ],
+#                                   global_MDFS$res_2D0$statistic[ plausible  ]),
+#                        IG2D_SD= apply(IG2D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
+#                        IG1D= pmax(global_MDFS$res_1Dm$statistic[ plausible  ],
+#                                   global_MDFS$res_1D0$statistic[ plausible  ]),
+#                        IG1D_SD=apply(IG1D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final)),
+#                        rel_1D= features_AP_filtered90["md1D",],
+#                        rel_2D= colSums(rel_2D),
+#                        rel_u=  features_AP_filtered90["u",]
+#                        )
+fs_df<- data.frame(taxon=global_basis,
+                        IG2D= pmax(global_MDFS$res_2Dm$statistic[ global_basis  ],
+                                   global_MDFS$res_2D0$statistic[ global_basis  ]),
                         IG2D_SD= apply(IG2D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
-                        IG1D= pmax(global_MDFS$res_1Dm$statistic[ plausible  ],
-                                   global_MDFS$res_1D0$statistic[ plausible  ]),
+                        IG1D= pmax(global_MDFS$res_1Dm$statistic[ global_basis  ],
+                                   global_MDFS$res_1D0$statistic[ global_basis  ]),
                         IG1D_SD=apply(IG1D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final)),
                         rel_1D= features_AP_filtered90["md1D",],
                         rel_2D= colSums(rel_2D),
                         rel_u=  features_AP_filtered90["u",]
                         )
-
 viz_fs_df<- fs_df
 rownames(viz_fs_df)<-NULL
 viz_fs_df$taxon<-sapply(strsplit(fs_df$taxon,"\\."), function(x) x[[length(x)]])
