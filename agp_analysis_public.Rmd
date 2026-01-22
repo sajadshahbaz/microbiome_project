@@ -1147,23 +1147,12 @@ jackknife_SE<- function(replicates,N,D,R=NULL){
 
 for (v in names(global_MDFS))
   names(global_MDFS[[v]]$statistic)<- global_MDFS[[v]]$feature_names
-#fs_df<- data.frame(taxon=plausible,
-#                        IG2D= pmax(global_MDFS$res_2Dm$statistic[ plausible  ],
-#                                   global_MDFS$res_2D0$statistic[ plausible  ]),
-#                        IG2D_SD= apply(IG2D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
-#                        IG1D= pmax(global_MDFS$res_1Dm$statistic[ plausible  ],
-#                                   global_MDFS$res_1D0$statistic[ plausible  ]),
-#                        IG1D_SD=apply(IG1D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final)),
-#                        rel_1D= features_AP_filtered90["md1D",],
-#                        rel_2D= colSums(rel_2D),
-#                        rel_u=  features_AP_filtered90["u",]
-#                        )
-fs_df<- data.frame(taxon=global_basis,
-                        IG2D= pmax(global_MDFS$res_2Dm$statistic[ global_basis  ],
-                                   global_MDFS$res_2D0$statistic[ global_basis  ]),
+fs_df<- data.frame(taxon=plausible,
+                        IG2D= pmax(global_MDFS$res_2Dm$statistic[ plausible  ],
+                                   global_MDFS$res_2D0$statistic[ plausible  ]),
                         IG2D_SD= apply(IG2D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final) ),
-                        IG1D= pmax(global_MDFS$res_1Dm$statistic[ global_basis  ],
-                                   global_MDFS$res_1D0$statistic[ global_basis  ]),
+                        IG1D= pmax(global_MDFS$res_1Dm$statistic[ plausible  ],
+                                   global_MDFS$res_1D0$statistic[ plausible  ]),
                         IG1D_SD=apply(IG1D,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37*nrow(taxonomy.mean.final)),
                         rel_1D= features_AP_filtered90["md1D",],
                         rel_2D= colSums(rel_2D),
@@ -1764,4 +1753,4 @@ dev.off()
 #
 #
 #
-```
+#```
