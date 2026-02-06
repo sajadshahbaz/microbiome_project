@@ -542,159 +542,6 @@ for (j in 1:n_repeats){
 
 ```
 
-##### Overall performance (median dataset ROC curve)
-
-```{r}
-#| label: roc
-#| dependson: performance
-#| cache: true
-
-
-METHODxROC=list()
-AUCxROC=list()
-CONFxMETHOD=list()
-ORxMETHOD=list()
-
-set.seed(644545)
-seeds_glob=sample.int(213212,4,replace=FALSE)
-names(seeds_glob)= METHODS[1:4]
-for (METHOD in METHODS[1:4]){
-if (METHOD=='u') sel_feats<- global_U$rel_set
-if (METHOD=='md1D') sel_feats<- union(global_MDFS$res_1Dm$rel_set, 
-					global_MDFS$res_1D0$rel_set) 
-if (METHOD=='md12D') sel_feats<- Reduce(union, list(global_MDFS$res_2Dm$rel_set, 
-					global_MDFS$res_1Dm$rel_set, 
-					global_MDFS$res_1D0$rel_set, 
-					global_MDFS$res_2D0$rel_set)) 
-if (METHOD=='md12Dp') sel_feats<- Reduce(union,list(global_MDFS$res_2Dm$rel_set, 
-					global_MDFS$res_1Dm$rel_set, 
-					global_MDFS$res_1D0$rel_set, 
-					global_MDFS$res_2D0$rel_set,
-					global_MDFS$res_2D0$partner_set,
-					global_MDFS$res_2Dm$partner_set
-					)) 
-
-set.seed(seeds_glob[[METHOD]])
-RF_mdl<- randomForest(x=taxonomy.mean.final[,sel_feats],
-		      y= decision.mean.final |> as.factor() )
-    y_thr= balanced.decision(x = RF_mdl$votes[,2],
-                             y= decision.mean.final )$threshold
-    y_pbin<- (RF_mdl$votes[,2] >= y_thr)
-    CONFxMETHOD[[METHOD]]=table(Predicted=as.numeric(y_pbin),Actual= decision.mean.final)
-    ORxMETHOD[[METHOD]]=odds_ratio(y_pred = y_pbin,y = decision.mean.final)
-    roc_curve=roc(response=decision.mean.final,
-        predictor=RF_mdl$votes[,2],quiet=TRUE)
-METHODxROC[[METHOD]]= roc_curve
-AUCxROC[[METHOD]]= auc(roc_curve)
-}
-names(METHODxROC)<- c("MDFS-1D","MDFS-2D", "MDFS-2D + partners", "U-test")
-
-for (i_nm in seq_along(names(METHODxROC)))
-  for (i_nm2 in seq_along(names(METHODxROC)))
-    if (i_nm<i_nm2) { nm<- names(METHODxROC)[[i_nm]]; nm2<- names(METHODxROC)[[i_nm2]] 
-      print(sprintf("%s vs %s", nm,nm2))
-    print(roc.test(METHODxROC[[nm]], METHODxROC[[nm2]]))
-    }
-names(METHODxROC)<- sapply(seq_along(METHODxROC),
-                           function(m)
-                             sprintf("%s, AUC=%.2f",
-                                     names(METHODxROC)[[m]],
-                                     AUCxROC[[m]]))
-         
-P<-ggroc(METHODxROC, legacy.axes = T,aes=c("color"),lwd=0.75) +
-geom_abline(slope = 1 ,intercept = 0, linetype="dashed") + # add identity line
-theme(
-panel.background = element_blank(),
-axis.title.x = element_text(size =18, face = 'bold'),
-axis.title.y = element_text(size =18, face = 'bold'),
-panel.border = element_rect(size = 2, fill = NA),
-axis.text.x = element_text(size = 14, face ='bold'),
-axis.text.y = element_text(size = 14, face ='bold')) +
-xlab('100% - Specificity') +
-ylab('Sensitivity') +
-scale_x_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
-scale_y_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
-  ggtitle("Feature Selection + RF: ROC comparison") +# theme(legend.position = "left")
-  scale_color_discrete(name = "FS method") +
-   guides(color = guide_legend(override.aes = list(lwd = 5)))
-ggsave("figures/roc_agp.pdf", P)
-print(P)
-for (m in METHODS[1:4]){
-	print(m)
-	print(CONFxMETHOD[[m]])
-	print(sprintf("OR=%.3f ",ORxMETHOD[[m]]))
-}
-
-
-
-
-
-
-```
-
-
-
-```{r}
-#| label: roc_tab
-#| dependson: roc
-#| cache: true
-library(pROC)
-
-PAIRWISE_TAB <- list()
-nm_methods <- names(METHODxROC)
-
-k <- 1
-for (i in seq_along(nm_methods)) {
-  for (j in seq_along(nm_methods)) {
-    if (i < j) {
-
-      m1 <- nm_methods[i]
-      m2 <- nm_methods[j]
-
-      roc1 <- METHODxROC[[m1]]
-      roc2 <- METHODxROC[[m2]]
-
-      rt <- roc.test(roc1, roc2, conf.int=TRUE)   # DeLong test
-
-      # AUCs
-      auc1 <- as.numeric(auc(roc1))
-      auc2 <- as.numeric(auc(roc2))
-
-      # CI for delta AUC
-
-      delta_ci_txt <- sprintf(
-        "[%.3f, %.3f]",
-	rt$conf.int[1],
-	rt$conf.int[2]
-      )
-
-      PAIRWISE_TAB[[k]] <- data.frame(
-        model_1 = m1,
-        model_2 = m2,
-
-        AUC_1 = round(auc1, 2),
-        AUC_2 = round(auc2, 2),
-
-        OR_1 = round(ORxMETHOD[[METHODS[i]]], 2),
-        OR_2 = round(ORxMETHOD[[METHODS[j]]], 2),
-
-        deltaAUC_CI = delta_ci_txt,
-
-        Z = round(as.numeric(rt$statistic), 1),
-        p_value = round(rt$p.value, 4),
-
-        stringsAsFactors = FALSE
-      )
-
-      k <- k + 1
-    }
-  }
-}
-
-PAIRWISE_TAB <- do.call(rbind, PAIRWISE_TAB)
-
-PAIRWISE_TAB
-```
 
 ```{r}
 #  model_file_string="RF_models/agp_j=%d_fs=%s_lop=%.2f.rds"
@@ -866,6 +713,75 @@ long_perf <- melt(performance,
 
 
 ```
+
+```{r}
+overlaps<-matrix(nrow=length(subsample), ncol=length(subsample))
+for (i in seq_along(subsample))
+for (j in seq_along(subsample)) {
+ if (i < j){
+overlaps[i,j]<-overlaps[j,i]<- length(intersect(subsample[[i]]$keep,subsample[[j]]$keep))/
+	       length(union(subsample[[i]]$keep,subsample[[j]]$keep))
+ }
+ overlaps[i,i]= 1
+}
+
+L=  diag(colSums(overlaps)) - overlaps
+fiedler= eigen(L)$vectors[, length(subsample) -1 ]
+long_perf$fielderOrder= rank(fiedler)[ long_perf$Repeat ]
+hc_order= hclust( as.dist(1-overlaps), method="average")$order
+long_perf$hcOrder= hc_order[ long_perf$Repeat ]
+
+```
+
+```{r}
+wide <- dcast(
+  long_perf,
+  Repeat + Metric + fielderOrder + hcOrder ~ Method,
+  value.var = "Value"
+)
+pairs_methods<- 	t(combn(unique(long_perf$Method),2))
+
+diff_long <- do.call(
+  rbind,
+  lapply(seq_len(nrow(pairs_methods)), function(i) {
+    m1 <- as.character(pairs_methods[i, 1])
+    m2 <-  as.character( pairs_methods[i, 2])
+
+    data.frame(
+      Repeat       = wide$Repeat,
+      Metric       = wide$Metric,
+      Method1      = m1,
+      Method2      = m2,
+      Diff         = wide[[m2]] - wide[[m1]],
+      fielderOrder = wide$fielderOrder,
+      hcOrder      = wide$hcOrder,
+      stringsAsFactors = FALSE
+    )
+  })
+)
+
+
+diff_long$Comparison <- paste(diff_long$Method2,
+                              "–",
+                              diff_long$Method1)
+
+
+```
+
+```{r}
+ggplot(diff_long,
+       aes(x = hcOrder,
+           y = Diff,
+           color = Comparison)) +
+  geom_hline(yintercept = 0, linetype = 2, color = "grey50") +
+  geom_line(alpha = 0.25) +
+  geom_point(size = 0.6) +
+  facet_wrap(Comparison~ Metric, scales = "free_y") +
+  theme_bw()
+
+
+```
+
 
 ```{r}
 #install.packages("dplyr")
@@ -1056,11 +972,11 @@ for (j in c(1:n_repeats) ){
                 thresholds = colMedians(as.matrix(plausible_ab_at_j)) )
   presence_0_at_j<-binarize_taxa(as.matrix(plausible_ab_at_j), 
                 thresholds = rep(0, ncol(plausible_ab_at_j))) 
-  abundance_per_rep[j,]= colMeans(plausible_ab_at_j)
+  abundance_per_rep[j,]= colSums(plausible_ab_at_j)/colSums(presence_0_at_j)
   presence_0[j,]=  colMeans(presence_0_at_j)
   presence_m[j,]=  colMeans(presence_m_at_j)
-  abundance_per_repH[j,]=colMeans(plausible_ab_at_j[y[subsample[[j]]$keep]==0, ])
-  abundance_per_repD[j,]=colMeans(plausible_ab_at_j[y[subsample[[j]]$keep]==1, ])
+  abundance_per_repH[j,]=colSums(plausible_ab_at_j[y[subsample[[j]]$keep]==0, ])/colSums(presence_0_at_j[y[subsample[[j]]$keep]==0, ])
+  abundance_per_repD[j,]=colSums(plausible_ab_at_j[y[subsample[[j]]$keep]==1, ])/colSums(presence_0_at_j[y[subsample[[j]]$keep]==1, ])
   presence_0H[j,]=colMeans(presence_0_at_j[y[subsample[[j]]$keep]==0, ])
   presence_0D[j,]=colMeans(presence_0_at_j[y[subsample[[j]]$keep]==1, ])
   presence_mH[j,]=colMeans(presence_m_at_j[y[subsample[[j]]$keep]==0, ])
@@ -1083,6 +999,9 @@ colnames(rel_2D_named)<- sapply(strsplit(plausible, "\\."), function(x) x[[lengt
 freqs_pure2D<- colSums(rel_2D_named)
 freqs_1or2D<- viz_f90$md12D
 vpm0<- partners_m0
+named_partners_m0<- partners_m0
+rownames(named_partners_m0)<- plausible
+colnames(named_partners_m0)<- colnames(tdata)
 colnames(vpm0)<- sapply(strsplit(colnames(tdata), "\\."), function(x) x[[length(x)]])
 rownames(vpm0)<-sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
 cbind(rel2D_freq=freqs_pure2D,
@@ -1090,6 +1009,7 @@ cbind(rel2D_freq=freqs_pure2D,
       vpm0[, colMaxs(vpm0)>= 200])-> freq_and_partners
 freq_and_partners<- freq_and_partners[ freq_and_partners[, "rel12D_freq"] > 400, ]
 write.csv(freq_and_partners, file= "agp_2D_rel_freq&partnerships.csv")
+saveRDS(rownames(named_partners_m0[ rowMaxs(named_partners_m0)>=450, colMaxs(named_partners_m0)>= 450 ] ), "plausible_relevant2D_and_synergistic.rds")
 ```
 
 
@@ -1118,7 +1038,7 @@ rownames(vpm0)<-sapply(strsplit(plausible, "\\."), function(x) x[[length(x)]])
 vpm0<- vpm0[,order(colSums(vpm0),decreasing=TRUE)]
 vpm0<- vpm0[order(rowSums(vpm0), decreasing = TRUE),]
 vpm0<- vpm0[, colMaxs(vpm0)>450]
-#vpm0<- vpm0[rowMaxs(vpm0)>200 , ]
+vpm0<- vpm0[rowMaxs(vpm0)>450, ]
 vpm0_flat<-melt(vpm0)
 colnames(vpm0_flat)<-c("rel","partner","freq")
 ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
@@ -1126,6 +1046,279 @@ ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
     geom_text(aes(label = freq), color = "pink")
 
 ```
+
+###### The median dataset performance of the "plausible" sets of features for each method
+
+```{r}
+#| label: roc
+#| dependson: performance
+#| cache: true
+
+
+METHODxROC=list()
+AUCxROC=list()
+CONFxMETHOD=list()
+ORxMETHOD=list()
+
+set.seed(644545)
+seeds_glob=sample.int(213212,4,replace=FALSE)
+names(seeds_glob)= METHODS[1:4]
+for (METHOD in METHODS[1:4]){
+if (METHOD=='u') sel_feats<- names(features_AP_filtered90["u", features_AP_filtered90["u",] > 450 ])
+if (METHOD=='md1D') sel_feats<-names(features_AP_filtered90["md1D", features_AP_filtered90["md1D",] > 450 ]) 
+if (METHOD=='md12D') sel_feats<- names(features_AP_filtered90["md12D", features_AP_filtered90["md12D",] > 450 ]) 
+ #Reduce(union, list(global_MDFS$res_2Dm$rel_set, 
+
+ #global_MDFS$res_1Dm$rel_set, 
+
+ #global_MDFS$res_1D0$rel_set, 
+
+ #global_MDFS$res_2D0$rel_set)) 
+if (METHOD=='md12Dp') sel_feats<- names(features_AP_filtered90["md12Dp", features_AP_filtered90["md12Dp",] > 450 ]) 
+# Reduce(union,list(global_MDFS$res_2Dm$rel_set, 
+#					global_MDFS$res_1Dm$rel_set, 
+#					global_MDFS$res_1D0$rel_set, 
+#					global_MDFS$res_2D0$rel_set,
+#					global_MDFS$res_2D0$partner_set,
+#					global_MDFS$res_2Dm$partner_set
+#					)) 
+
+set.seed(seeds_glob[[METHOD]])
+RF_mdl<- randomForest(x=taxonomy.mean.final[,sel_feats],
+		      y= decision.mean.final |> as.factor() )
+    y_thr= balanced.decision(x = RF_mdl$votes[,2],
+                             y= decision.mean.final )$threshold
+    y_pbin<- (RF_mdl$votes[,2] >= y_thr)
+    CONFxMETHOD[[METHOD]]=table(Predicted=as.numeric(y_pbin),Actual= decision.mean.final)
+    ORxMETHOD[[METHOD]]=odds_ratio(y_pred = y_pbin,y = decision.mean.final)
+    roc_curve=roc(response=decision.mean.final,
+        predictor=RF_mdl$votes[,2],quiet=TRUE)
+METHODxROC[[METHOD]]= roc_curve
+AUCxROC[[METHOD]]= auc(roc_curve)
+}
+names(METHODxROC)<- c("MDFS-1D","MDFS-2D", "MDFS-2D + partners", "U-test")
+
+for (i_nm in seq_along(names(METHODxROC)))
+  for (i_nm2 in seq_along(names(METHODxROC)))
+    if (i_nm<i_nm2) { nm<- names(METHODxROC)[[i_nm]]; nm2<- names(METHODxROC)[[i_nm2]] 
+      print(sprintf("%s vs %s", nm,nm2))
+    print(roc.test(METHODxROC[[nm]], METHODxROC[[nm2]]))
+    }
+names(METHODxROC)<- sapply(seq_along(METHODxROC),
+                           function(m)
+                             sprintf("%s, AUC=%.2f",
+                                     names(METHODxROC)[[m]],
+                                     AUCxROC[[m]]))
+         
+P<-ggroc(METHODxROC, legacy.axes = T,aes=c("color"),lwd=0.75) +
+geom_abline(slope = 1 ,intercept = 0, linetype="dashed") + # add identity line
+theme(
+panel.background = element_blank(),
+axis.title.x = element_text(size =18, face = 'bold'),
+axis.title.y = element_text(size =18, face = 'bold'),
+panel.border = element_rect(size = 2, fill = NA),
+axis.text.x = element_text(size = 14, face ='bold'),
+axis.text.y = element_text(size = 14, face ='bold')) +
+xlab('100% - Specificity') +
+ylab('Sensitivity') +
+scale_x_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
+scale_y_continuous(breaks = seq(0,1,0.25), labels = seq(0,1,0.25) * 100) +
+  ggtitle("Feature Selection + RF: ROC comparison") +# theme(legend.position = "left")
+  scale_color_discrete(name = "FS method") +
+   guides(color = guide_legend(override.aes = list(lwd = 5)))
+ggsave("figures/roc_agp.pdf", P, width=6, height=4)
+print(P)
+for (m in METHODS[1:4]){
+	print(m)
+	print(CONFxMETHOD[[m]])
+	print(sprintf("OR=%.3f ",ORxMETHOD[[m]]))
+}
+```
+
+
+
+
+```{r}
+#| label: roc_tab
+#| dependson: roc
+#| cache: true
+library(pROC)
+
+PAIRWISE_TAB <- list()
+nm_methods <- names(METHODxROC)
+
+k <- 1
+for (i in seq_along(nm_methods)) {
+  for (j in seq_along(nm_methods)) {
+    if (i < j) {
+
+      m1 <- nm_methods[i]
+      m2 <- nm_methods[j]
+
+      roc1 <- METHODxROC[[m1]]
+      roc2 <- METHODxROC[[m2]]
+
+      rt <- roc.test(roc1, roc2, conf.int=TRUE)   # DeLong test
+
+      # AUCs
+      auc1 <- as.numeric(auc(roc1))
+      auc2 <- as.numeric(auc(roc2))
+
+      # CI for delta AUC
+
+      delta_ci_txt <- sprintf(
+        "[%.3f, %.3f]",
+	rt$conf.int[1],
+	rt$conf.int[2]
+      )
+
+      PAIRWISE_TAB[[k]] <- data.frame(
+        model_1 = m1,
+        model_2 = m2,
+
+        AUC_1 = round(auc1, 3),
+        AUC_2 = round(auc2, 3),
+
+        OR_1 = round(ORxMETHOD[[METHODS[i]]], 3),
+        OR_2 = round(ORxMETHOD[[METHODS[j]]], 3),
+
+        deltaAUC_CI = delta_ci_txt,
+
+        Z = round(as.numeric(rt$statistic), 3),
+        p_value = round(rt$p.value, 8),
+
+        stringsAsFactors = FALSE
+      )
+
+      k <- k + 1
+    }
+  }
+}
+
+PAIRWISE_TAB <- do.call(rbind, PAIRWISE_TAB)
+
+PAIRWISE_TAB
+```
+
+
+```{r}
+df_to_latex_table <- function(df,
+                              caption = "Caption goes here",
+                              label   = NULL,
+                              digits  = NULL) {
+
+  stopifnot(is.data.frame(df))
+
+  # Column alignment: l for character, r for numeric
+  align <- sapply(df, function(x)
+    if (is.character(x)) "l" else "r"
+  )
+   colnames(df)-> clnames
+  # Format contents
+  df[] <- lapply(df, function(x) {
+    if (is.numeric(x)) {
+      if (is.null(digits)) {
+        if (any(abs(x) < 1e-4, na.rm=TRUE))
+        format(signif(x,4), trim = TRUE, scientific = TRUE)
+       else
+        format(x, trim = TRUE, scientific = FALSE)
+      } else {
+        formatC(x, digits = digits, format = "fg")
+      }
+    } else if (is.character(x)) {
+      gsub("_", "\\\\_", x)   # escape LaTeX underscores
+    } else {
+      x
+    }
+  })
+  colnames(df)<- clnames
+
+  cat("\\begin{table*}[t]\n")
+  cat("\\centering\n")
+  cat(sprintf("\\caption{%s}\n", caption))
+  if (!is.null(label)) {
+    cat(sprintf("\\label{%s}\n", label))
+  }
+
+  cat(sprintf("\\begin{tabular}{%s}\n",
+              paste(align, collapse = "")))
+
+  cat("\\toprule\n")
+  cat(paste(colnames(df), collapse = " & "), " \\\\\n")
+  cat("\\midrule\n")
+
+  apply(df, 1, function(row) {
+    cat(paste(row, collapse = " & "), " \\\\\n")
+  })
+
+  cat("\\bottomrule\n")
+  cat("\\end{tabular}\n")
+  cat("\\end{table*}\n")
+}
+
+```
+
+
+###### Pseudo observation based test on the AUC across repeats
+
+```{r}
+
+
+long_auc<- long_perf[ long_perf$Metric== "AUC", ]
+long_auc<- long_auc [ long_auc$Method!="md12DpInt",]
+long_auc$Method<- as.character(long_auc$Method)
+
+friedman.test(Value ~ Method | Repeat, data=long_auc) -> fried_Test
+fried_Test
+
+
+```
+
+
+```{r}
+pairwise.wilcox.test(
+  long_auc$Value[ long_auc$Repeat < 351], long_auc$Method[ long_auc$Repeat < 35t1],
+  paired = TRUE,
+  p.adjust.method = "holm"
+)-> pwtest_res
+pwtest_res
+
+```
+
+```{r}
+pwtest_df<-pwtest_res$p.value |> as.data.frame() 
+pwtest_df$rowheaders<- rownames(pwtest_res$p.value)
+rownames(pwtest_df)<- NULL
+pwtest_df<- pwtest_df[, c(ncol(pwtest_df), 1:(ncol(pwtest_df)-1))]
+df_to_latex_table(pwtest_df, caption="parwise wilcoxon tests on AUC of machine learning models using features chosen by each method.") 
+
+```
+
+
+```{r}
+
+methods_pairs<-combn(unique(long_auc$Method),2,simplify=FALSE)
+m1Vm2<- matrix(nrow= length(unique(long_auc$Method)), #-1,
+    ncol= length(unique(long_auc$Method)))#-1)
+colnames(m1Vm2)<- unique(long_auc$Method)#[-1]
+rownames(m1Vm2)<-unique(long_auc$Method)#[ - length(unique(long_auc$Method)) ]
+for (mp in methods_pairs)
+{ m1Vm2[ mp[[1]], mp[[2]] ]= mean(long_auc$Value[long_auc$Method== mp[[1]]] >= 
+      long_auc$Value[long_auc$Method== mp[[2]]] )
+m1Vm2[ mp[[2]], mp[[1]] ]= mean(long_auc$Value[long_auc$Method== mp[[2]]] >= 
+      long_auc$Value[long_auc$Method== mp[[1]]] )
+
+
+    }
+df_m1Vm2<- as.data.frame(m1Vm2)
+df_m1Vm2$rowheaders<- rownames(m1Vm2)
+rownames(df_m1Vm2)<- NULL
+df_m1Vm2<- df_m1Vm2[, c(ncol(df_m1Vm2), 1:(ncol(df_m1Vm2)-1))]
+colnames(df_m1Vm2)[[1]]= "ph"
+df_m1Vm2
+
+```
+
 ###### jackknife estimates of statistics: IG, presence, abundance
 
 ```{r}
@@ -1133,6 +1326,7 @@ ggplot(vpm0_flat, aes(x=partner,y=rel,fill=freq))+ geom_tile()+
 
 jackknife_SE<- function(replicates,N,D,R=NULL){
   if (is.null(R)) R= N/D
+
   mean_rep= mean(replicates)
   sqrt((R/length(replicates))*sum((replicates-mean_rep)^2))
 }
@@ -1212,23 +1406,24 @@ for (i in seq_along(ses))
 #| label: pab_df
 #| dependson: fs_df
 #| cache: true
-taxonomy.mean.final<- taxonomy.mean.final/10000
+binarize_taxa(as.matrix(taxonomy.mean.final[,plausible]),
+                thresholds = rep(0, length(plausible)))-> pres_final_plausible 
 pab_df<- data.frame(taxon=plausible,
-                        ab= colMeans(taxonomy.mean.final[,plausible]),
+                        ab= colSums(taxonomy.mean.final[,plausible])/colSums(pres_final_plausible),
                         ab_SD= apply(abundance_per_rep,2,jackknife_SE, nrow(taxonomy.mean.final), 0.37* nrow(taxonomy.mean.final) ),
-                        abH= colMeans(taxonomy.mean.final[ decision.mean.final==0 ,plausible]),
+                        abH= colSums(taxonomy.mean.final[ decision.mean.final==0 ,plausible])/colSums(pres_final_plausible[ decision.mean.final==0,]),
                         abH_SD= apply(abundance_per_repH,2,jackknife_SE, sum(decision.mean.final==0), 
                                       0.37*sum(decision.mean.final==0)),
-                        abD= colMeans(taxonomy.mean.final[ decision.mean.final==1 ,plausible]),
+                        abD= colSums(taxonomy.mean.final[ decision.mean.final==1 ,plausible])/colSums(pres_final_plausible[ decision.mean.final==1,]),
                         abD_SD= apply(abundance_per_repH,2,jackknife_SE, sum(decision.mean.final==1), 
                                       0.37*sum(decision.mean.final==1)),
-                        pr=colMeans(presence_0),
+                        pr=colMeans(pres_final_plausible),
                         pr_SD=apply(presence_0,2, jackknife_SE, nrow(taxonomy.mean.final),
                                     0.37*nrow(taxonomy.mean.final)),
-                        prH=colMeans(presence_0H),
+                        prH=colMeans(pres_final_plausible[decision.mean.final==0,]),
                         prH_SD=apply(presence_0H,2,jackknife_SE, sum(decision.mean.final==0), 
                                       0.37*sum(decision.mean.final==0)),
-                        prD=colMeans(presence_0D),
+                        prH=colMeans(pres_final_plausible[decision.mean.final==1,]),
                         prD_SD=apply(presence_0D,2,jackknife_SE, sum(decision.mean.final==1), 
                                       0.37*sum(decision.mean.final==1))
                         )
@@ -1236,8 +1431,8 @@ pab_df<- data.frame(taxon=plausible,
 viz_pab_df<- pab_df
 rownames(viz_pab_df)<-NULL
 viz_pab_df$taxon<-sapply(strsplit(pab_df$taxon,"\\."), function(x) x[[length(x)]])
-viz_pab_df[, grep("ab",colnames(viz_pab_df))]<-10000*viz_pab_df[, grep("ab",colnames(viz_pab_df))]
-viz_pab_df[,2:ncol(viz_pab_df)]<- round(viz_pab_df[,2:ncol(viz_pab_df)],2)
+#viz_pab_df[, grep("ab",colnames(viz_pab_df))]<-10000*viz_pab_df[, grep("ab",colnames(viz_pab_df))]
+viz_pab_df[,2:ncol(viz_pab_df)]<- round(viz_pab_df[,2:ncol(viz_pab_df)],3)
 viz_pab_df[order(-viz_fs_df$IG2D) , ]
 
 ```
@@ -1257,14 +1452,46 @@ file="agp_data_per_taxa.csv")
 
 ```
 
-
 ```{r}
+
+publication_tab<- viz_ig_pab[, c("taxon", "IG2D", "IG1D", "selection_freq_1D", "selection_freq_2D", "selection_freq_U_test", 
+				 "abundance", "presence(zero_based)",  
+			 "abundance_H", "abundance_D",
+			 "presence_H",  "presence_D")
+				  ]
+
+colnames(publication_tab)<- c("taxon","IG2D", "IG1D", "MDFS1D_freq", "MDFS2D_freq", "Utest_freq", "abundance", "presence", 
+			 "abundance_H", "abundance_D",
+			 "presence_H",  "presence_D")
+
 
 ```
 
 
 
 
+
+```{r}
+morans_I<- function( S, y) {
+ n<- length(y)
+ s_o<- sum(S)
+ y<- y - mean(y)
+ y_o<- y %o% y
+ (n/s_o)*sum(S*y)/sum( diag(y_o) ) 
+}
+
+
+morans.test<- function(S,y){
+I_obs<- morans_I( S,y)
+I_perm<- replicate(2000, {
+  y_perm<- sample(y)
+  morans_I(S, y_perm)
+
+  })
+list(p.value= mean(abs(I_perm) >= abs(I_obs)),
+     statistic= I_obs)
+}
+```
 
 ##### MDFS 3D test
 
@@ -1546,24 +1773,44 @@ max_permIG<- data.frame(IG1D= lapply(perm_full_MDFSres, function(x) max(max(x$re
 
 ```{r}
 pdf("figures/max_perm_IG.pdf")
-for (name in names(max_permIG))
+for (name in names(max_permIG)[1:2])
  hist(max_permIG[[name]],main=sprintf("maximum %s - distribution over permutations", name))
 dev.off()
-for (name in names(max_permIG))
+for (name in names(max_permIG)[1:2])
  hist(max_permIG[[name]],main=sprintf("maximum %s - distribution over permutations", name))
-for (name in names(max_permIG)){
+for (name in names(max_permIG)[1:2]){
 	cat(sprintf("\n percentiles of maximum %s observed - over permuations", name))
-	cat(paste0("\n    ", capture.output(round(quantile(max_permIG[[name]], probs=seq(0,1,0.1)),2 ))))
+	cat(paste0("\n    ", capture.output(round(quantile(max_permIG[[name]], probs=c(0.9,0.95,0.98,0.99,0.998,1)),2 ))))
 }
 ```
 
+
+###### Delta IG - for confirmed variables that had some confirmed synergistic partners
+
 ```{r}
-#Reduce(rbind, 
-#       lapply(perm_subsample, function(x)
-#x$p_idx  )
-#       )-> permutations
-#permutations<- as.data.frame(permutations)
-#nrow(permutations[!duplicated(permutations),])
+plausible_synergizers<- readRDS("plausible_relevant2D_and_synergistic.rds")
+deltaIG_pattern="features/perm_agp_deltaIGs_set_j=%d_lop=%.2f.rds"
+perm_DELTA_IGs<- matrix(nrow=2000, ncol=length(plausible_synergizers))
+for (j in 1:2000){
+perm_DELTA_IGs[j,]= readRDS(sprintf(deltaIG_pattern,j,lop))
+}
+colnames(perm_DELTA_IGs)<- plausible_synergizers
+colnames(perm_DELTA_IGs)<- sapply(strsplit(colnames(perm_DELTA_IGs),"\\."), function(x) x[[length(x)]])
+```
+
+
+```{r}
+apply(perm_DELTA_IGs,2,function(x)
+      quantile(x, probs=c(0.9,0.95,0.98,0.99,0.998,1)) |> round(2)
+
+) |> t() |> as.data.frame() -> delta_IG_permdf
+
+delta_IG_permdf$taxon<- rownames(delta_IG_permdf)
+rownames(delta_IG_permdf)<- NULL
+delta_IG_permdf<- delta_IG_permdf[,c(ncol(delta_IG_permdf),
+				     1:(ncol(delta_IG_permdf)-1))]
+delta_IG_permdf
+
 ```
 
 
