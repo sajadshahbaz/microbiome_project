@@ -227,7 +227,7 @@ binary.mean.final<-taxonomy.mean.final*0
 for (i in 1:ncol(binary.mean.final)) binary.mean.final[,i]<-taxonomy.mean.final[,i]>median(taxonomy.mean.final[,i])
 
 save(meta.mean.final,decision.mean.final,taxonomy.mean.final,binary.mean.final, samples_chosen_names, file='mean_data.RData')
-} else {load("mean_data.RData")}
+} else {load("old_mean_data.RData")}
 #sanity correctness check:
 #tsub<-tdata[samples_chosen_names, colnames(taxonomy.mean.final)]
 #stopifnot(all((tsub/rowSums(tsub)*10000)==taxonomy.mean.final))
@@ -714,73 +714,7 @@ long_perf <- melt(performance,
 
 ```
 
-```{r}
-overlaps<-matrix(nrow=length(subsample), ncol=length(subsample))
-for (i in seq_along(subsample))
-for (j in seq_along(subsample)) {
- if (i < j){
-overlaps[i,j]<-overlaps[j,i]<- length(intersect(subsample[[i]]$keep,subsample[[j]]$keep))/
-	       length(union(subsample[[i]]$keep,subsample[[j]]$keep))
- }
- overlaps[i,i]= 1
-}
 
-L=  diag(colSums(overlaps)) - overlaps
-fiedler= eigen(L)$vectors[, length(subsample) -1 ]
-long_perf$fielderOrder= rank(fiedler)[ long_perf$Repeat ]
-hc_order= hclust( as.dist(1-overlaps), method="average")$order
-long_perf$hcOrder= hc_order[ long_perf$Repeat ]
-
-```
-
-```{r}
-wide <- dcast(
-  long_perf,
-  Repeat + Metric + fielderOrder + hcOrder ~ Method,
-  value.var = "Value"
-)
-pairs_methods<- 	t(combn(unique(long_perf$Method),2))
-
-diff_long <- do.call(
-  rbind,
-  lapply(seq_len(nrow(pairs_methods)), function(i) {
-    m1 <- as.character(pairs_methods[i, 1])
-    m2 <-  as.character( pairs_methods[i, 2])
-
-    data.frame(
-      Repeat       = wide$Repeat,
-      Metric       = wide$Metric,
-      Method1      = m1,
-      Method2      = m2,
-      Diff         = wide[[m2]] - wide[[m1]],
-      fielderOrder = wide$fielderOrder,
-      hcOrder      = wide$hcOrder,
-      stringsAsFactors = FALSE
-    )
-  })
-)
-
-
-diff_long$Comparison <- paste(diff_long$Method2,
-                              "–",
-                              diff_long$Method1)
-
-
-```
-
-```{r}
-ggplot(diff_long,
-       aes(x = hcOrder,
-           y = Diff,
-           color = Comparison)) +
-  geom_hline(yintercept = 0, linetype = 2, color = "grey50") +
-  geom_line(alpha = 0.25) +
-  geom_point(size = 0.6) +
-  facet_wrap(Comparison~ Metric, scales = "free_y") +
-  theme_bw()
-
-
-```
 
 
 ```{r}
@@ -1012,6 +946,11 @@ write.csv(freq_and_partners, file= "agp_2D_rel_freq&partnerships.csv")
 saveRDS(rownames(named_partners_m0[ rowMaxs(named_partners_m0)>=450, colMaxs(named_partners_m0)>= 450 ] ), "plausible_relevant2D_and_synergistic.rds")
 ```
 
+```{r}
+#frequency of being a partner:
+freq_and_partners[, 3: ncol(freq_and_partners) ] |> colMaxs()
+```
+
 
 
 ```{r fig.width=7, fig.height=6}
@@ -1157,12 +1096,24 @@ for (i in seq_along(nm_methods)) {
 
       roc1 <- METHODxROC[[m1]]
       roc2 <- METHODxROC[[m2]]
-
-      rt <- roc.test(roc1, roc2, conf.int=TRUE)   # DeLong test
-
       # AUCs
       auc1 <- as.numeric(auc(roc1))
       auc2 <- as.numeric(auc(roc2))
+
+      if (auc1 < auc2){
+        temp<- m2
+        m2<- m1
+	m1<- temp
+	temp<- roc2
+	roc2<- roc1
+	roc1<- temp
+	temp<- auc2
+	auc2<-auc1
+	auc1<-temp
+      }
+
+      rt <- roc.test(roc1, roc2, conf.int=TRUE)   # DeLong test
+
 
       # CI for delta AUC
 
@@ -1173,8 +1124,8 @@ for (i in seq_along(nm_methods)) {
       )
 
       PAIRWISE_TAB[[k]] <- data.frame(
-        model_1 = m1,
-        model_2 = m2,
+        model_1 = gsub(",.AU.*", "", m1),
+        model_2 = gsub(",.AU.*", "", m2),
 
         AUC_1 = round(auc1, 3),
         AUC_2 = round(auc2, 3),
@@ -1277,7 +1228,7 @@ fried_Test
 
 ```{r}
 pairwise.wilcox.test(
-  long_auc$Value[ long_auc$Repeat < 351], long_auc$Method[ long_auc$Repeat < 35t1],
+  long_auc$Value[ long_auc$Repeat < 351], long_auc$Method[ long_auc$Repeat < 351],
   paired = TRUE,
   p.adjust.method = "holm"
 )-> pwtest_res
@@ -1319,6 +1270,67 @@ df_m1Vm2
 
 ```
 
+```{r}
+do.call(data.frame, aggregate(Value ~ Method, long_auc, function (x){
+	   c(mean=mean(x),
+	     sd=sd(x),
+	     p2.5=quantile(x,0.025),
+	     p97.5=quantile(x,0.975),
+	     p0.5=quantile(x, 0.005),
+	     p99.5=quantile(x, 0.995)
+	   )})) -> summary_auc
+
+summary_auc<- summary_auc[ order(summary_auc$Value.mean, decreasing=TRUE),]
+colnames(summary_auc)<- c("Name","Mean","SD","CI95_low","CI95_high","CI99_low","CI99_high"
+)
+summary_auc[, 2:ncol(summary_auc) ]<- round( summary_auc[, 2:ncol(summary_auc) ], 3)
+summary_auc
+summary_auc$`2.5-97.5%`<- paste0("[",summary_auc$CI95_low, ",",summary_auc$CI95_high,"]")
+summary_auc$`0.5-99.5%`<- paste0("[",summary_auc$CI99_low, ",",summary_auc$CI99_high,"]")
+summary_auc<- summary_auc[, !(colnames(summary_auc)%in%c("CI95_low","CI95_high","CI99_low","CI99_high"))] 
+
+```
+
+
+```{r}
+methods_pairs<-combn(summary_auc$Name,2, simplify=FALSE)
+do.call(rbind, lapply(methods_pairs, function(p){
+x<- long_auc$Value[ long_auc$Method== p[[1]] ]
+y<- long_auc$Value[ long_auc$Method== p[[2]] ]
+d<- x- y
+data.frame(Name= paste(p[[1]],"vs",p[[2]]),
+	   Mean= mean(d),
+	   SD=sd(d),
+	     p2.5=quantile(d,0.025),
+	     p97.5=quantile(d,0.975),
+	     p0.5=quantile(d, 0.005),
+	     p99.5=quantile(d, 0.995),
+	     m1WinFreq= mean(d>0)
+	     )
+
+
+})
+)-> pairwise_summary_auc
+colnames(pairwise_summary_auc)<- c("m1 vs m2","Mean","SD","CI95_low","CI95_high","CI99_low","CI99_high", "m1>m2")
+ pairwise_summary_auc[, !(colnames(pairwise_summary_auc)%in% c("m1 vs m2", "SD")) ]= round(pairwise_summary_auc[,  !(colnames(pairwise_summary_auc)%in% c("m1 vs m2", "SD")) ],3)
+ pairwise_summary_auc[, "SD"]= round(pairwise_summary_auc[,"SD"],4)
+m1geqm2<- pairwise_summary_auc[["m1>m2"]]
+pairwise_summary_auc$`2.5-97.5%`<- paste0("[",pairwise_summary_auc$CI95_low, ",",pairwise_summary_auc$CI95_high,"]")
+pairwise_summary_auc$`0.5-99.5%`<- paste0("[",pairwise_summary_auc$CI99_low, ",",pairwise_summary_auc$CI99_high,"]")
+pairwise_summary_auc<- pairwise_summary_auc[, !(colnames(pairwise_summary_auc)%in%c("CI95_low","CI95_high","CI99_low","CI99_high", "m1>m2"))] 
+pairwise_summary_auc[["m1>m2"]]<-m1geqm2
+
+```
+
+```{r}
+
+pairwise_summary_auc[["m1 vs m2"]]<-gsub("partners","p",pairwise_summary_auc[["m1 vs m2"]])
+summary_auc[["Name"]]<-gsub("partners","p",summary_auc[["Name"]])
+summary_auc
+pairwise_summary_auc
+
+```
+
 ###### jackknife estimates of statistics: IG, presence, abundance
 
 ```{r}
@@ -1356,7 +1368,34 @@ viz_fs_df<- fs_df
 rownames(viz_fs_df)<-NULL
 viz_fs_df$taxon<-sapply(strsplit(fs_df$taxon,"\\."), function(x) x[[length(x)]])
 viz_fs_df[,2:5]<- round(viz_fs_df[,2:5],2)
+viz_fs_df$partner_freq<-  colMaxs( partners_m0[, match(fs_df$taxon, colnames(tdata)) ])
 viz_fs_df[order(-viz_fs_df$IG2D) , ]
+```
+
+
+```{r}
+
+sel_freq<- viz_fs_df[,grep("rel_", colnames(viz_fs_df))]
+
+taxa_sets<- lapply(sel_freq, function(x) viz_fs_df$taxon[ x >= 450 ] )
+
+taxa_sets[["partners"]]<- sapply(strsplit(colnames(tdata)[ colMaxs(partners_m0) >= 450 ], "\\."), function(z) z[[length(z)]])
+combins<- list(all= names(taxa_sets)[1:3],
+	       oneD= c("rel_u", "rel_1D"),
+	       MDFS_12D= c("rel_1D", "rel_2D"),
+	       MDFS_1D=c("rel_1D"),
+	       U_test= c("rel_u"),
+	       MDFS_2D=c("rel_2D"),
+	       partners=c("partners"))
+sapply( combins, function(x)
+       #if (length(x)>1)
+       length(Reduce(intersect, taxa_sets[ x ] ))
+       #else length(taxa_sets[[x]])
+)
+
+
+
+
 ```
 
 ```{r}

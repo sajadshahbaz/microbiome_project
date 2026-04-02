@@ -254,7 +254,6 @@ colnames(tab_sampleSizes)<- c("0","1")
 tab_sampleSizes
 
 
-```
 
 ### test FS procedures through subsampling validation
 
@@ -285,6 +284,7 @@ We set this threshold to the minimum IG obtained for relevant variables in 1D.
 - `interaction_data` extends the information on the interaction in `partner_set` and can be used to obtain synthetic variables, one per each interaction, that can be used in inference problems, along with regular features.
 Function `generate_interaction_variables()`, enumerates 4 states in each interaction, according to the increasing probablity of `y==1`. 
 Thus, based on `interaction_data`, it can create an array of additional, discrete, ordinal features.
+
 
 
 #### Base result - on the whole datasets
@@ -663,6 +663,58 @@ features_AP_90$YachidaS_2019|> t()
 
 
 ```{r}
+
+method_selected<- array(0, dim=c(3,4,ncol(tdata)),
+			dimnames=list(cohort=names(features[[1]]),
+				      method=c("U-test", "MDFS1D", "MDFS2D", "partners"),
+				      taxon= colnames(tdata)
+			)
+			)
+method_name_map<- data.frame( features_name= names(features),
+			      msel_name= dimnames(method_selected)$method)
+
+for (coh in names(features[[1]]))
+  for (j in seq_along(features[[1]][[coh]]))
+
+  {
+  MDFS1d<- features[[ "md1D" ]][[coh]][[j]]
+  MDFS2d<- union(full_MDFSres[[coh]][[j]]$res_2Dm$rel_set,
+full_MDFSres[[coh]][[j]]$res_2D0$rel_set)
+  partners<- setdiff(features[["md12Dp"]][[coh]][[j]], union(MDFS1d, MDFS2d) )
+ method_selected[ coh, "MDFS1D", ] = method_selected[ coh,"MDFS1D", ] +  (colnames(tdata) %in% MDFS1d)
+ method_selected[ coh, "MDFS2D", ] = method_selected[ coh,"MDFS2D", ] +  (colnames(tdata) %in% MDFS2d)
+ method_selected[ coh, "partners", ] = method_selected[ coh,"partners", ] +  (colnames(tdata) %in% partners)
+ method_selected[ coh, "U-test", ] = method_selected[ coh,"U-test", ] +  (colnames(tdata) %in% features[["u"]][[coh]][[j]])
+
+  }
+
+combins<- list(all= setdiff(method_name_map$msel_name, "partners"),
+	       OneD= c("U-test", "MDFS1D"),
+	       MDFS_12D= c("MDFS1D", "MDFS2D"),
+	       MDFS_1D= c("MDFS1D"),
+	       U_test=c("U-test"),
+	       MDFS_2D= c("MDFS2D"),
+	       partners=c("partners"))
+cohXcbn_n_sel<- array(NA, dim=c(length(cohort_ids), length(combins)),
+                          dimnames=list(cohort=cohort_ids,
+					method_combinations=names(combins)))
+
+for (coh in cohort_ids){
+  for (cb_name in names(combins)){
+  cbn<- combins[[cb_name]] 
+  ker<- dimnames(method_selected)[[2]] %in% cbn 
+  cohXcbn_n_sel[coh, cb_name]= apply(method_selected[coh,,] >= 450, 2, function(x) all(x==ker))  |> sum()
+  }
+}
+
+cohXcbn_n_sel
+
+
+
+```
+
+
+```{r}
 #| label: fs_plausible_vs_global
 
 print("Fraction of plausible taxa found by U-test in global run, also found in one global run MDFS")
@@ -678,6 +730,68 @@ mapply(function(mdfs, u, recurrent90){
   MDFS_global, U_global, features_AP_90
   
   )
+```
+
+
+```{r}
+roc_cohXmethod<- rep(NA , 3) |> as.list()
+conf_cohXmethod<- array(NA, dim=c(3, 2, 2,2),
+			dimnames=list(cohort=names(features_AP_90),
+				      method=c("md1D", "md12Dp"),
+				      y_pred=NULL,
+				      y_true=NULL
+				      ))
+auc_cohXmethod<- array(NA, dim=c(3, 2),
+			dimnames=list(cohort=names(features_AP_90),
+				      method=c("md1D", "md12Dp")))
+OR_cohXmethod<- array(NA, dim=c(3, 2),
+			dimnames=list(cohort=names(features_AP_90),
+				      method=c("md1D", "md12Dp")))
+
+names(roc_cohXmethod)<- names(features_AP_90)
+for (coh in names(features_AP_90)) {
+ roc_cohXmethod[[coh]]=list()
+ for (meth in c("md1D", "md12Dp"))
+ roc_cohXmethod[[coh]][[meth]]= NA
+}
+for (coh in names(features_AP_90)) 
+ for (meth in c("md1D", "md12Dp")){
+   fs<- colnames(features_AP_90[[coh]])[ 
+           features_AP_90[[coh]][meth,] >= 450
+	   ]
+   if (length(fs)){
+        X<- taxa[[coh]][, fs , drop=FALSE]
+        y<- decision[[coh]]
+set.seed(1234)
+        print(sprintf("%s %s",coh, meth))
+        print(paste("    ", fs))
+        rf_mdl<- randomForest(x=X, y=as.factor(y) )
+       y_thr= balanced.decision(x = rf_mdl$votes[,2],
+                             y= y)$threshold
+       y_pbin<- (rf_mdl$votes[,2] >= y_thr)
+       stopifnot(length(unique(y_pbin))>1)
+       conf_cohXmethod[coh, meth, ,]= table(Predicted=as.numeric(y_pbin),
+					    Actual= y)
+       OR_cohXmethod[coh, meth]=odds_ratio(y_pred=y_pbin,
+					   y=y)
+       auc_cohXmethod[coh, meth]= auc(response=y,
+				      predictor=rf_mdl$votes[,2],
+				      quiet=TRUE)
+       roc_cohXmethod[[coh]][[meth]]=roc(response=y,
+					 predictor=rf_mdl$votes[,2],
+       quiet=TRUE)
+   }
+
+ }
+
+```
+
+
+```{r}
+
+roc.test(roc_cohXmethod[[1]][[1]], roc_cohXmethod[[1]][[2]],
+	 conf.int=TRUE)
+
 ```
 
 #### Permutation test
@@ -697,8 +811,8 @@ perm_features<- list(md1D=list(),
                 md12Dp=list(),
                 u=list()
                 )
-for (fs in names(perm_features))
-	for (coh in cohort_ids)
+for (fs in names(perm_features)){
+	for (coh in cohort_ids){
 	perm_features[[fs]][[coh]]=list()
 
 		#cohort name    #repeat	  #leave out perc.
